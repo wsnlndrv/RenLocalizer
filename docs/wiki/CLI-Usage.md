@@ -1,14 +1,15 @@
 # 🖥️ Command Line Interface (CLI) Usage
 
-The RenLocalizer CLI (`run_cli.py`) is designed for automation, remote server usage, or advanced batch processing.
+The RenLocalizer CLI is designed for automation, remote server usage, or advanced batch processing.
 
 ---
 
 ## 🚀 Basic Usage
-Launch the CLI without arguments to enter the **Interactive Mode**:
+Launch the CLI with the module syntax:
 ```bash
-python run_cli.py
+python -m src.cli_main translate -i
 ```
+This opens the **Interactive Mode** wizard.
 
 ---
 
@@ -17,7 +18,7 @@ For automation, pass arguments directly.
 
 ### **Example: Translate Project to Spanish**
 ```bash
-python run_cli.py "/path/to/game" --target-lang es --engine local_llm --mode full
+python -m src.cli_main translate "/path/to/game" --target-lang es --engine google --mode auto
 ```
 
 ### 📋 Argument Reference
@@ -25,18 +26,35 @@ python run_cli.py "/path/to/game" --target-lang es --engine local_llm --mode ful
 | Argument | Description |
 | :--- | :--- |
 | `--target-lang` | Code of the target language (e.g., `tr`, `es`, `ru`). |
-| `--engine` | `google`, `deepl`, `openai`, `gemini`, `local_llm`. |
-| `--mode` | `full` (Extract + Translate) or `translate` (Translate existing files). |
+| `--engine` | `google`, `deepl`, `openai`, `gemini`, `local_llm`, `pseudo`. |
+| `--mode` | `auto` (Detect), `full` (Extract + Translate), `translate` (Only translate). |
 | `--deep-scan` | Enable AST-based deep scanning. |
-| `--rpyc` | Read directly from binary RPYC files. |
-| `--force-ui` | Force translation of all UI elements. |
+| `--verbose` | Show detailed logging output. |
+
+---
+
+## 🔧 Additional CLI Commands (v2.6.4+)
+
+| Command | Description |
+| :--- | :--- |
+| `health-check <path>` | Run static analysis on a project directory. |
+| `font-check <path> --lang tr` | Check font compatibility for a target language. |
+| `pseudo <path>` | Generate pseudo-localized text for UI overflow testing. |
+| `fuzzy <old_tl> <new_tl>` | Smart update: Recover translations using fuzzy matching. |
+| `extract-glossary <path>` | Extract potential glossary terms from project files. |
+
+### Example: Health Check
+```bash
+python -m src.cli_main health-check "C:\Games\MyRenPyGame"
+```
 
 ---
 
 ## 🌟 Modes Explained
 
-*   **Full Mode (`--mode full`):** The comprehensive workflow. It expects a game directory or EXE. It extracts RPA archives, normalizes encodings, and translates everything.
-*   **Translate Mode (`--mode translate`):** For projects that are already unpacked. It scans for `.rpy` / `.rpymc` files and performs the text translation.
+*   **Auto Mode (`--mode auto`):** Recommended. Detects whether RPA extraction is needed.
+*   **Full Mode (`--mode full`):** For packaged games. Extracts RPA archives, normalizes encodings, and translates.
+*   **Translate Mode (`--mode translate`):** For already unpacked projects or existing `tl/` folders.
 
 ---
 
@@ -45,14 +63,16 @@ The CLI version is lightweight and doesn't require a GUI. You can run it on a Li
 
 ```bash
 # Example script for a cloud server
-python run_cli.py "./GameProject" \
+python -m src.cli_main translate "./GameProject" \
   --target-lang tr \
   --engine gemini \
-  --mode full \
-  --deep-scan
+  --mode auto \
+  --deep-scan \
+  --verbose
 ```
 
 ---
 
 ## 📋 Logs & Troubleshooting
 In case of failure, the CLI writes a detailed diagnostic report to **`error_output.txt`** in the project root. Check this file to see which file or line caused the issue.
+

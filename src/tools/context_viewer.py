@@ -294,7 +294,7 @@ class ContextAnalyzer:
                 dirs.remove('renpy')
             
             for filename in files:
-                if filename.endswith('.rpy'):
+                if filename.lower().endswith('.rpy'):
                     file_path = os.path.join(root, filename)
                     contexts = self.analyze_file(file_path)
                     if contexts:

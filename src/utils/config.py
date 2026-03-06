@@ -174,6 +174,8 @@ class TranslationSettings:
     local_llm_model: str = "llama3.2"
     local_llm_url: str = "http://localhost:11434/v1"
     local_llm_timeout: int = 300  # Local LLM için ayrı timeout (saniye) - yerel modeller daha yavaş olabilir
+    libretranslate_url: str = "http://localhost:5000" # Local LibreTranslate Endpoint
+    libretranslate_api_key: str = "" # Optional API key for managed instances
     # Advanced AI Settings
     ai_temperature: float = AI_DEFAULT_TEMPERATURE  # 0.0-1.0, lower = more consistent, higher = more creative
     ai_timeout: int = AI_DEFAULT_TIMEOUT  # seconds, timeout for AI requests
@@ -254,6 +256,8 @@ class TranslationSettings:
         self.target_language = str(self.target_language).strip() or "tr"
         self.openai_base_url = str(self.openai_base_url).strip()
         self.local_llm_url = str(self.local_llm_url).strip() or "http://localhost:11434/v1"
+        self.libretranslate_url = str(self.libretranslate_url).strip() or "http://localhost:5000"
+        self.libretranslate_api_key = str(self.libretranslate_api_key).strip()
 
         # --- JSON field validation ---
         try:

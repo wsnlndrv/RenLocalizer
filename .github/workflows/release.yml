@@ -7,7 +7,7 @@ on:
 
 jobs:
   # ============================================
-  # Windows Build
+  # Windows Build (unchanged — onedir zip)
   # ============================================
   build-windows:
     runs-on: windows-latest
@@ -42,10 +42,10 @@ jobs:
           path: RenLocalizer-Windows-x64.zip
 
   # ============================================
-  # Linux Build
+  # Linux Build → AppImage
   # ============================================
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -55,7 +55,12 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse2 imagemagick
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
@@ -65,19 +70,46 @@ jobs:
         run: |
           pyinstaller RenLocalizer.spec
 
-      - name: Create archive
+      - name: Convert icon
         run: |
-          cd dist
-          tar -czvf ../RenLocalizer-Linux-x64.tar.gz RenLocalizer/
+          convert icon.ico[0] -resize 256x256 renlocalizer.png
+
+      - name: Create AppImage
+        run: |
+          # Create AppDir structure
+          mkdir -p RenLocalizer.AppDir/usr/bin
+
+          # Copy PyInstaller output
+          cp -R dist/RenLocalizer RenLocalizer.AppDir/usr/bin/RenLocalizer
+
+          # Copy AppImage metadata
+          cp build/linux/AppRun RenLocalizer.AppDir/AppRun
+          chmod +x RenLocalizer.AppDir/AppRun
+
+          cp build/linux/renlocalizer.desktop RenLocalizer.AppDir/renlocalizer.desktop
+          cp renlocalizer.png RenLocalizer.AppDir/renlocalizer.png
+
+          # Also place .desktop and icon in standard locations
+          mkdir -p RenLocalizer.AppDir/usr/share/applications
+          mkdir -p RenLocalizer.AppDir/usr/share/icons/hicolor/256x256/apps
+          cp build/linux/renlocalizer.desktop RenLocalizer.AppDir/usr/share/applications/
+          cp renlocalizer.png RenLocalizer.AppDir/usr/share/icons/hicolor/256x256/apps/
+
+          # Download appimagetool
+          wget -q "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" -O appimagetool
+          chmod +x appimagetool
+
+          # Build AppImage (use --appimage-extract-and-run for environments without FUSE)
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run RenLocalizer.AppDir RenLocalizer-Linux-x64.AppImage
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: linux-build
-          path: RenLocalizer-Linux-x64.tar.gz
+          path: RenLocalizer-Linux-x64.AppImage
 
   # ============================================
-  # macOS Build
+  # macOS Build → DMG
   # ============================================
   build-macos:
     runs-on: macos-latest
@@ -100,16 +132,33 @@ jobs:
         run: |
           pyinstaller RenLocalizer.spec
 
-      - name: Create archive
+      - name: Create .app bundle
         run: |
-          cd dist
-          zip -r ../RenLocalizer-macOS-x64.zip RenLocalizer/
+          chmod +x build/macos/create_app_bundle.sh
+          ./build/macos/create_app_bundle.sh dist/RenLocalizer RenLocalizer.app
+
+      - name: Create DMG
+        run: |
+          # Create a temporary DMG directory with the .app
+          mkdir -p dmg_contents
+          cp -R RenLocalizer.app dmg_contents/
+
+          # Add a symlink to /Applications for drag-and-drop install
+          ln -s /Applications dmg_contents/Applications
+
+          # Create DMG
+          hdiutil create \
+            -volname "RenLocalizer" \
+            -srcfolder dmg_contents \
+            -ov \
+            -format UDZO \
+            RenLocalizer-macOS.dmg
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos-build
-          path: RenLocalizer-macOS-x64.zip
+          path: RenLocalizer-macOS.dmg
 
   # ============================================
   # Create GitHub Release
@@ -140,12 +189,10 @@ jobs:
         with:
           files: |
             RenLocalizer-Windows-x64.zip
-            RenLocalizer-Linux-x64.tar.gz
-            RenLocalizer-macOS-x64.zip
+            RenLocalizer-Linux-x64.AppImage
+            RenLocalizer-macOS.dmg
           body: ""
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-

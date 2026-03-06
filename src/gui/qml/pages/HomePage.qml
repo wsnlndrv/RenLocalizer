@@ -66,6 +66,7 @@ Rectangle {
         translatedLines = translated
         untranslatedLines = untranslated
         statsAvailable = true
+        if (typeof backend === "undefined" || backend === null) return
         var statsMsg = (backend.uiTrigger, backend.getTextWithDefault("stats_summary_log", "📊 Total: {total} | Translated: {translated} | Untranslated: {untranslated}"))
         statsMsg = statsMsg.replace("{total}", total).replace("{translated}", translated).replace("{untranslated}", untranslated)
         addLog("success", statsMsg)
@@ -79,23 +80,28 @@ Rectangle {
     // File Dialog
     FileDialog {
         id: fileDialog
-        title: (backend.uiTrigger, backend.getTextWithDefault("select_exe_file_title", "Select Game File"))
-        nameFilters: Qt.platform.os === "windows" 
-            ? [(backend.uiTrigger, backend.getTextWithDefault("file_filter_exe", "Executable files (*.exe)")), (backend.uiTrigger, backend.getTextWithDefault("file_filter_all", "All files (*)"))]
-            : [(backend.uiTrigger, backend.getTextWithDefault("file_filter_shell", "Shell scripts (*.sh)")), (backend.uiTrigger, backend.getTextWithDefault("file_filter_all", "All files (*)"))]
+        title: (typeof backend !== "undefined" && backend !== null) ? (backend.uiTrigger, backend.getTextWithDefault("select_exe_file_title", "Select Game File")) : "Select File"
+        nameFilters: {
+            if (typeof backend === "undefined" || backend === null) return ["All files (*)"]
+            return Qt.platform.os === "windows" 
+                ? [(backend.uiTrigger, backend.getTextWithDefault("file_filter_exe", "Executable files (*.exe)")), (backend.uiTrigger, backend.getTextWithDefault("file_filter_all", "All files (*)"))]
+                : [(backend.uiTrigger, backend.getTextWithDefault("file_filter_shell", "Shell scripts (*.sh)")), (backend.uiTrigger, backend.getTextWithDefault("file_filter_all", "All files (*)"))]
+        }
         onAccepted: {
-            backend.setProjectPath(selectedFile.toString())
-            projectPathField.text = selectedFile.toString().replace("file:///", "")
+            var p = selectedFile.toString()
+            backend.setProjectPath(p)
+            projectPathField.text = (Qt.platform.os === "windows") ? p.replace("file:///", "") : p.replace("file://", "")
         }
     }
 
     // Folder Dialog
     FolderDialog {
         id: folderDialog
-        title: (backend.uiTrigger, backend.getTextWithDefault("select_game_folder", "Select Game Folder"))
+        title: (typeof backend !== "undefined" && backend !== null) ? (backend.uiTrigger, backend.getTextWithDefault("select_game_folder", "Select Game Folder")) : "Select Folder"
         onAccepted: {
-            backend.setProjectPath(selectedFolder.toString())
-            projectPathField.text = selectedFolder.toString().replace("file:///", "")
+            var p = selectedFolder.toString()
+            backend.setProjectPath(p)
+            projectPathField.text = (Qt.platform.os === "windows") ? p.replace("file:///", "") : p.replace("file://", "")
         }
     }
 
@@ -295,7 +301,11 @@ Rectangle {
                                 textRole: "name"
                                 valueRole: "code"
                                 currentIndex: 0
-                                onCurrentValueChanged: backend.setSourceLanguage(currentValue)
+                                onActivated: backend.setSourceLanguage(currentValue)
+                                Component.onCompleted: {
+                                    var idx = indexOfValue(backend.getSourceLanguage())
+                                    if (idx >= 0) currentIndex = idx
+                                }
 
                                 background: Rectangle {
                                     radius: 8
@@ -333,7 +343,11 @@ Rectangle {
                                 textRole: "name"
                                 valueRole: "code"
                                 currentIndex: 0
-                                onCurrentValueChanged: backend.setTargetLanguage(currentValue)
+                                onActivated: backend.setTargetLanguage(currentValue)
+                                Component.onCompleted: {
+                                    var idx = indexOfValue(backend.getTargetLanguage())
+                                    if (idx >= 0) currentIndex = idx
+                                }
 
                                 background: Rectangle {
                                     radius: 8
@@ -372,7 +386,11 @@ Rectangle {
                                 textRole: "name"
                                 valueRole: "code"
                                 currentIndex: 0
-                                onCurrentValueChanged: backend.setEngine(currentValue)
+                                onActivated: backend.setEngine(currentValue)
+                                Component.onCompleted: {
+                                    var idx = indexOfValue(backend.selectedEngine)
+                                    if (idx >= 0) currentIndex = idx
+                                }
 
                                 background: Rectangle {
                                     radius: 8

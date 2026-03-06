@@ -207,7 +207,7 @@ def run_pseudo_command(args) -> int:
     
     # Find .rpy files to process
     rpy_files = []
-    if os.path.isfile(input_path) and input_path.endswith('.rpy'):
+    if os.path.isfile(input_path) and input_path.lower().endswith('.rpy'):
         rpy_files = [input_path]
     else:
         game_dir = os.path.join(input_path, 'game')
@@ -217,7 +217,7 @@ def run_pseudo_command(args) -> int:
                 if '/tl/' in root.replace('\\', '/') or '\\tl\\' in root:
                     continue
                 for f in files:
-                    if f.endswith('.rpy'):
+                    if f.lower().endswith('.rpy'):
                         rpy_files.append(os.path.join(root, f))
     
     if not rpy_files:
@@ -759,7 +759,7 @@ def main() -> int:
     translate_parser.add_argument("--config", help="Path to JSON configuration file")
     translate_parser.add_argument("--target-lang", "-t", default="tr", help="Target language code (default: tr)")
     translate_parser.add_argument("--source-lang", "-s", default="auto", help="Source language code (default: auto)")
-    translate_parser.add_argument("--engine", "-e", default="google", choices=["google", "deepl", "openai", "gemini", "local_llm", "pseudo"], help="Translation engine")
+    translate_parser.add_argument("--engine", "-e", default="google", choices=["google", "deepl", "openai", "gemini", "local_llm", "libretranslate", "pseudo"], help="Translation engine")
     translate_parser.add_argument("--mode", choices=["auto", "full", "translate"], default="auto", 
                         help="Operation mode: 'auto' (detect), 'full' (UnRen+Trans), 'translate' (Trans only)")
     translate_parser.add_argument("--proxy", action="store_true", help="Enable proxy")
@@ -808,7 +808,7 @@ def main() -> int:
     parser.add_argument("--config", help="Path to JSON configuration file to override settings")
     parser.add_argument("--target-lang", "-t", default="tr", help="Target language code (default: tr)")
     parser.add_argument("--source-lang", "-s", default="auto", help="Source language code (default: auto)")
-    parser.add_argument("--engine", "-e", default="google", choices=["google", "deepl", "openai", "gemini", "local_llm", "pseudo"], help="Translation engine")
+    parser.add_argument("--engine", "-e", default="google", choices=["google", "deepl", "openai", "gemini", "local_llm", "libretranslate", "pseudo"], help="Translation engine")
     parser.add_argument("--mode", choices=["auto", "full", "translate"], default="auto", 
                         help="Operation mode: 'auto' (detect), 'full' (UnRen+Trans), 'translate' (Trans only)")
     parser.add_argument("--proxy", action="store_true", help="Enable proxy")
@@ -969,6 +969,17 @@ def main() -> int:
                     base_url=getattr(ts, 'local_llm_url', 'http://localhost:11434/v1'),
                     config_manager=config_manager,
                     proxy_manager=proxy_manager
+                )
+            )
+
+        elif selected_engine_code == 'libretranslate':
+            from src.core.translator import LibreTranslateTranslator
+            translation_manager.add_translator(
+                TranslationEngine.LIBRETRANSLATE,
+                LibreTranslateTranslator(
+                    base_url=getattr(ts, 'libretranslate_url', 'http://localhost:5000'),
+                    api_key=getattr(ts, 'libretranslate_api_key', ''),
+                    config_manager=config_manager
                 )
             )
             

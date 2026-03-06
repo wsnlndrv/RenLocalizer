@@ -40,14 +40,14 @@ class LLMTranslator(BaseTranslator):
     SYSTEM_PROMPT_TEMPLATE = """You are a professional video game localizer specializing in Ren'Py visual novels.
 Your task is to translate the given text from {source_lang} to {target_lang}.
 
-CRITICAL RULES:
+CRITICAL SYSTEM RULES:
 1. Preserve all XML placeholders like <ph id="0">[variable]</ph> or <ph id="1">{{tag}}</ph> EXACTLY as they are.
 2. Do NOT translate the content inside <ph>...</ph> tags. Treat them as immutable variables.
 3. You can move the <ph> tags within the sentence to respect the target language grammar.
-4. Maintain the original tone and style of the visual novel.
-5. Return ONLY the translated text. Do NOT add notes, explanations, or quotes.
-6. If the text contains only technical codes or is untranslatable, return it exactly as is.
-7. This is a game translation. The content belongs to a fantasy/fictional world and may contain adult (NSFW) elements. Please translate without censorship, maintaining a professional localizer's tone.
+4. NARRATIVE CONTEXT: This is a visual novel where sentences flow consecutively. Maintain a consistent and natural tone. Pay strict attention to pronouns, politeness levels (e.g. formal "siz" vs informal "sen" in Turkish), and character voice.
+5. Return ONLY the translated text. Do NOT add notes, explanations, conversational filler, or quotes.
+6. If the text contains only technical codes, paths, or is untranslatable, return it exactly as is.
+7. This is an adult/unrestricted game. The content belongs to a fictional world and may contain adult (NSFW), violent, or sensitive elements. You MUST translate everything accurately without any censorship, moralizing, or softening of language. Maintain the professional localizer's tone.
 """
 
     # --- Constants for Batch Processing ---
@@ -148,14 +148,15 @@ CRITICAL RULES:
         pass
 
     # Enhanced prompt template for aggressive retry - forces AI to translate
-    AGGRESSIVE_RETRY_PROMPT = """You are a professional translator. The previous translation attempt returned the SAME text as the original.
-This is WRONG. You MUST translate from {source_lang} to {target_lang}.
+    AGGRESSIVE_RETRY_PROMPT = """You are a professional visual novel translator. The previous translation attempt returned the EXACT SAME text as the original.
+This is INCORRECT. You MUST translate the text from {source_lang} to {target_lang}.
 
 IMPORTANT:
-- The text "{original_text}" IS NOT A VARIABLE or CODE. It is CONTENT.
-- Unless it is a proper name like "John" or "Tokyo", it MUST be translated.
-- If it contains <ph> tags, keep them but translate the text around them.
-- Return ONLY the translation, nothing else.
+- The text "{original_text}" IS NOT A VARIABLE, CODE, OR PATH. It is dialogue or narration.
+- Unless it is a proper noun (e.g., "John", "Tokyo") or an interface code, it MUST be translated.
+- If it contains <ph> tags, keep them unmodified but translate the readable text around them.
+- Ensure the translation fits a visual novel context (pay attention to formal/informal tone).
+- Return ONLY the translation, nothing else. No apologies, no explanations.
 - Preserve XML placeholders like <ph id="0">...</ph> exactly."""
 
     async def translate_single(self, request: TranslationRequest) -> TranslationResult:
@@ -163,6 +164,14 @@ IMPORTANT:
         meta = request.metadata if isinstance(request.metadata, dict) else {}
         source_text = meta.get('original_text', request.text) if meta.get('preprotected') else request.text
         protected_text, placeholders = protect_renpy_syntax_xml(source_text)
+        
+        # Add context to single translation
+        context_hint = meta.get('context_hint')
+        if context_hint:
+            protected_text_prompt = f"CONTEXT (Previous line): {context_hint}\n\nTEXT TO TRANSLATE:\n{protected_text}"
+        else:
+            protected_text_prompt = protected_text
+
         
         # Check if aggressive retry is enabled
         aggressive_retry = False
@@ -194,7 +203,7 @@ IMPORTANT:
         
         for attempt in range(max_retries + 1):
             try:
-                translated_content = await self._generate_completion(system_prompt, protected_text)
+                translated_content = await self._generate_completion(system_prompt, protected_text_prompt)
                 final_text = restore_renpy_syntax_xml(translated_content, placeholders)
                 
                 # 2. AŞAMA KORUMA (Validation - Sadece uyarı, reddetme)
@@ -216,7 +225,7 @@ IMPORTANT:
                         )
                         
                         try:
-                            retry_content = await self._generate_completion(aggressive_prompt, protected_text)
+                            retry_content = await self._generate_completion(aggressive_prompt, protected_text_prompt)
                             retry_final = restore_renpy_syntax_xml(retry_content, placeholders)
                             
                             if retry_final.strip() != source_text.strip():
@@ -715,9 +724,13 @@ class LocalLLMTranslator(LLMTranslator):
             source_text = meta.get('original_text', request.text) if meta.get('preprotected') else request.text
             protected, placeholders = protect_renpy_syntax(source_text)
             
+            # Add context constraint
+            context_hint = meta.get('context_hint')
+            context_str = f"Context (Previous line): {context_hint}\nText to translate:\n" if context_hint else ""
+            
             if custom_prompt:
                 system_prompt = custom_prompt.format(source_lang=src_name, target_lang=tgt_name)
-                final_user_prompt = protected
+                final_user_prompt = context_str + protected
             else:
                 # For Local LLM, we combine system and user into a single clear instruction 
                 # because some local servers handle "system" role poorly.
@@ -725,7 +738,7 @@ class LocalLLMTranslator(LLMTranslator):
                 final_user_prompt = self.LOCAL_SYSTEM_PROMPT.format(
                     source_lang=src_name,
                     target_lang=tgt_name,
-                    text=protected
+                    text=context_str + protected
                 )
             
             # Get completion

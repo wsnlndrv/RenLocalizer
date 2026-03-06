@@ -191,9 +191,9 @@ class RenPyParser:
             r'^--?[a-z0-9_\-]+$', # Command line arguments (e.g. --force, -o)
             r'^[a-z0-9_/.]+\.(?:png|jpg|mp3|ogg|wav|webp|ttf|otf|woff2?|rpyc?|rpa)$', # Asset paths
             r'^[a-zA-Z0-9_]+/[a-zA-Z0-9_/.\-]+$', # Path fragments (folder/file)
-            r'^\s*(?:jump|call|show|hide|scene|play|stop|queue)\s+\w+', # Ren'Py commands as strings
-            r'^\s*(?:if|elif|else|while|for)\s+', # Control flow
-            r'^\s*\$?\s*[a-zA-Z_]\w*\s*=\s*',  # Variable assignment
+            r'^\s*(?:jump|call|show|hide|scene|play|stop|queue)\s+[a-zA-Z0-9_]+(?:\s+[a-zA-Z0-9_]+){0,4}$', # Ren'Py commands (max 5 args)
+            r'^\s*(?:if|elif|else|while|for)\s+.*:$', # Control flow (must end with colon)
+            r'^\s*\$?\s*[a-zA-Z_]\w*\s*=\s*(?:[a-zA-Z_]\w*|[0-9.]+|\[.*\]|\{.*\})$',  # Variable assignment (strict bounds)
             r'^[\w\-. ]+(?:/[\w\-. ]+)+$',     # Strict path (e.g. audio/bgm.ogg)
         ]
         # Combine patterns into one regex: (?:pattern1)|(?:pattern2)|...
@@ -267,20 +267,20 @@ class RenPyParser:
         )
 
         self.config_string_re = re.compile(
-            r"^\s*config\.(?:name|version|about|menu_|window_title|save_name)\s*=\s*(?:[rRuUbBfF]{,2})?(?P<quote>\"(?:[^\"\\]|\\.)*\"|'(?:[^\\']|\\.)*')"
+            r"^\s*(?P<kind>config)\.(?P<var_name>(?:name|version|about|menu_|window_title|save_name))\s*=\s*(?:[rRuUbBfF]{,2})?(?P<quote>\"(?:[^\"\\]|\\.)*\"|'(?:[^\\']|\\.)*')"
         )
         self.gui_text_re = re.compile(
-            r"^\s*gui\.(?:text|button|label|title|heading|caption|tooltip|confirm)(?:_[a-z_]*)?(?:\[[^\]]*\])?\s*=\s*(?P<quote>\"(?:[^\"\\]|\\.)*\"|'(?:[^\\']|\\.)*')"
+            r"^\s*(?P<kind>gui)\.(?P<var_name>(?:text|button|label|title|heading|caption|tooltip|confirm)(?:_[a-z_]*)?(?:\[[^\]]*\])?)\s*=\s*(?P<quote>\"(?:[^\"\\]|\\.)*\"|'(?:[^\\']|\\.)*')"
         )
         self.style_property_re = re.compile(
-            r"^\s*style\s*\.\s*[a-zA-Z_]\w*\s*=\s*(?P<quote>\"(?:[^\"\\]|\\.)*\"|'(?:[^\\']|\\.)*')"
+            r"^\s*style\s*\.\s*(?P<var_name>[a-zA-Z_]\w*)\s*=\s*(?P<quote>\"(?:[^\"\\]|\\.)*\"|'(?:[^\\']|\\.)*')"
         )
 
         # Simplified patterns to avoid complex nested quoting issues
         self._p_single_re = re.compile(r'^\s*(?:define\s+)?(?:gui|config)\.[a-zA-Z_]\w*\s*=\s*_p\s*\(')
         self._p_multiline_re = re.compile(r'^\s*(?:define\s+)?(?:gui|config)\.[a-zA-Z_]\w*\s*=\s*_p\s*\(\s*"""')
         self._underscore_re = re.compile(r'^\s*(?:define\s+)?[a-zA-Z_]\w*\s*=\s*(?:Character\s*\()?_\s*\(')
-        self.define_string_re = re.compile(r'^\s*define\s+(?:gui|config)\.[a-zA-Z_]\w*\s*=\s*')
+        self.define_string_re = re.compile(r'^\s*define\s+(?P<var_name>(?:gui|config)\.[a-zA-Z_]\w*)\s*=\s*' + self._quoted_string)
 
         self.alt_text_re = re.compile(r'\balt\b')
         self.input_text_re = re.compile(r'\b(default|prefix|suffix)\b')
@@ -426,9 +426,10 @@ class RenPyParser:
         # 11. Python Text Call: $ renpy.confirm("text"), $ narrator("text"), etc.
         # Covers Tier-1 API calls from DeepExtractionConfig
         # Note: display_menu excluded — takes a list arg, not a string (handled by AST deep scan)
+        # v2.7.2: Expanded to catch custom object methods like gallery.button
         self.python_text_call_re = re.compile(
-            r'^\s*\$\s*'
-            r'(?P<func>(?:renpy\.(?:confirm|display_notify)|narrator))'
+            r'^\s*\$?\s*'
+            r'(?P<func>(?:[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*))'
             r'\s*\(\s*'
             r'(?:[^,]*,\s*)?'
             rf'{_QUOTED_STRING_PATTERN}'
@@ -461,9 +462,9 @@ class RenPyParser:
         # Deep extraction: use module-level shared analyzer (avoids recompiling 15 regexes per parser instance)
         self._deep_var_analyzer = _module_deep_var_analyzer
 
-        self.layout_text_re = re.compile(r'^\s*layout\.[a-zA-Z0-9_]+\s*=\s*' + self._quoted_string)
-        self.store_text_re = re.compile(r'^\s*store\.[a-zA-Z0-9_]+\s*=\s*' + self._quoted_string)
-        self.general_define_re = re.compile(r'^\s*define\s+[a-zA-Z0-9_.]+\s*=\s*' + self._quoted_string)
+        self.layout_text_re = re.compile(r'^\s*(?P<kind>layout)\.(?P<var_name>[a-zA-Z0-9_]+)\s*=\s*' + self._quoted_string)
+        self.store_text_re = re.compile(r'^\s*(?P<kind>store)\.(?P<var_name>[a-zA-Z0-9_]+)\s*=\s*' + self._quoted_string)
+        self.general_define_re = re.compile(r'^\s*define\s+(?P<var_name>[a-zA-Z0-9_.]+)\s*=\s*' + self._quoted_string)
 
         # pattern registry placeholder (populated later in code)
         self.pattern_registry = []
@@ -813,9 +814,18 @@ class RenPyParser:
                 if isinstance(ctx, str):
                     ctx = [ctx]
                 text_value = entry.get('text', '')
-                # Filter out low-confidence or translation-block fragments
                 if not self.is_meaningful_text(text_value):
                     continue
+                
+                # V2.7.2: Deep Variable Analysis for global Pyparsing entries
+                if self._is_deep_feature_enabled('deep_extraction_bare_defines'):
+                    ctx_line = entry.get('context_line', '')
+                    if ctx_line and ('define ' in ctx_line or 'default ' in ctx_line):
+                        m_var = re.match(r'^\s*(?:define|default)\s+(?P<var_name>[a-zA-Z0-9_.]+)\s*=', ctx_line)
+                        if m_var:
+                            var_name = m_var.group('var_name')
+                            if not self._deep_var_analyzer.is_likely_translatable(var_name):
+                                continue
                 # Use raw_text when available for canonical deduplication,
                 # and normalize escape/newline variants so different extraction
                 # passes don't produce duplicate IDs for the same literal.
@@ -853,6 +863,16 @@ class RenPyParser:
                 text_value = token.text or ''
                 if not self.is_meaningful_text(text_value):
                     continue
+                
+                # V2.7.2: Deep Variable Analysis for TokenStream entries
+                if self._is_deep_feature_enabled('deep_extraction_bare_defines'):
+                    ctx_line = token.context_line
+                    if ctx_line and ('define ' in ctx_line or 'default ' in ctx_line):
+                        m_var = re.match(r'^\s*(?:define|default)\s+(?P<var_name>[a-zA-Z0-9_.]+)\s*=', ctx_line)
+                        if m_var:
+                            var_name = m_var.group('var_name')
+                            if not self._deep_var_analyzer.is_likely_translatable(var_name):
+                                continue
                 raw_txt = token.raw_text
                 canonical = raw_txt or text_value
                 canonical = canonical.replace('\r\n', '\n').replace('\r', '\n')
@@ -946,13 +966,18 @@ class RenPyParser:
                 # V2.7.1: Deep Extraction variable name filtering
                 # For bare define/default patterns, check if variable name suggests translatable content
                 _desc_type = descriptor.get('type', '')
-                if descriptor.get('deep_extract') or _desc_type == 'define':
-                    # Respect config toggle — skip if deep extraction for bare defines is disabled
-                    if not self._is_deep_feature_enabled('deep_extraction_bare_defines'):
+                if descriptor.get('deep_extract') or _desc_type in ('define', 'store', 'layout', 'config', 'gui', 'style'):
+                    # Respect config toggle — skip if deep extraction for bare defines is disabled (only for non-essential types)
+                    if _desc_type == 'define' and not self._is_deep_feature_enabled('deep_extraction_bare_defines'):
+                        # If it's a bare define and feature is off, skip it
                         continue
+                        
                     var_name = match.groupdict().get('var_name', '')
-                    if var_name and not self._deep_var_analyzer.is_likely_translatable(var_name):
-                        continue
+                    if var_name:
+                        if not self._deep_var_analyzer.is_likely_translatable(var_name):
+                            if self.logger.isEnabledFor(logging.DEBUG):
+                                self.logger.debug(f"Skipping non-translatable variable: {var_name}")
+                            continue
 
                 character = ""
                 char_group = descriptor.get('character_group')
@@ -1251,23 +1276,27 @@ class RenPyParser:
                             file_path=file_path
                         )
 
-            # --- V2.7.1: Secondary Pass for Python Text Calls ---
-            # Captures: $ renpy.confirm("text"), $ narrator("text"), etc.
+            # --- v2.7.2: Secondary Pass for generic Python Method/Function calls ---
+            # Using DeepExtractionConfig.TIER1_TEXT_CALLS to filter meaningful calls
             if self._is_deep_feature_enabled('deep_extraction_extended_api'):
-                py_text_match = self.python_text_call_re.match(raw_line)
-                if py_text_match:
-                    self._process_secondary_extraction(
-                        match=py_text_match,
-                        text_type=TextType.RENPY_FUNC,
-                        raw_line=raw_line,
-                        idx=idx,
-                        lines=lines,
-                        stripped_line=stripped_line,
-                        current_path=current_path,
-                        seen_texts=seen_texts,
-                        entries=entries,
-                        file_path=file_path
-                    )
+                # Try search instead of match for flexible in-line detection
+                for py_text_match in self.python_text_call_re.finditer(raw_line):
+                    func_name = py_text_match.group('func')
+                    # TIER1_TEXT_CALLS holds the whitelist of functions we trust
+                    tier1_calls = DeepExtractionConfig.get_merged_text_calls(self.config)
+                    if func_name in tier1_calls:
+                        self._process_secondary_extraction(
+                            match=py_text_match,
+                            text_type=TextType.RENPY_FUNC,
+                            raw_line=raw_line,
+                            idx=idx,
+                            lines=lines,
+                            stripped_line=stripped_line,
+                            current_path=current_path,
+                            seen_texts=seen_texts,
+                            entries=entries,
+                            file_path=file_path
+                        )
 
         return entries
 
@@ -1348,8 +1377,7 @@ class RenPyParser:
                 if isinstance(obj, str):
                     # Tighten JSON filters and include raw_text for ID stability
                     import re
-                    cleaned = re.sub(r'(\[[^\]]+\]|\{[^}]+\})', '', obj or '').strip()
-                    if sum(1 for ch in cleaned if ch.isalpha()) < 2:
+                    if not self._is_meaningful_data_value(obj, current_key):
                         return
                     raw_text = '"' + (obj.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')) + '"'
                     entries.append({
@@ -1383,7 +1411,7 @@ class RenPyParser:
 
             def recurse(obj, path, current_key):
                 if isinstance(obj, str):
-                    if self._is_meaningful_data_value(obj, current_key):
+                    if self.is_meaningful_text(obj):
                         entries.append({
                             'text': obj,
                             'line_number': 0,
@@ -1528,9 +1556,9 @@ class RenPyParser:
         search_root = self._resolve_search_root(directory)
         results: Dict[Path, Set[str]] = {}
         if recursive:
-            iterator = search_root.glob("**/*.rpy")
+            iterator = list(search_root.glob("**/*.rpy")) + list(search_root.glob("**/*.RPY"))
         else:
-            iterator = search_root.glob("*.rpy")
+            iterator = list(search_root.glob("*.rpy")) + list(search_root.glob("*.RPY"))
         rpy_files = [f for f in iterator if not self._is_excluded_rpy(f, search_root)]
 
         self.logger.info(
@@ -1561,9 +1589,9 @@ class RenPyParser:
         search_root = self._resolve_search_root(directory)
         results: Dict[Path, Set[str]] = {}
         if recursive:
-            iterator = search_root.glob("**/*.rpy")
+            iterator = list(search_root.glob("**/*.rpy")) + list(search_root.glob("**/*.RPY"))
         else:
-            iterator = search_root.glob("*.rpy")
+            iterator = list(search_root.glob("*.rpy")) + list(search_root.glob("*.RPY"))
         rpy_files = [f for f in iterator if not self._is_excluded_rpy(f, search_root)]
 
         for rpy_file in rpy_files:
@@ -1584,6 +1612,12 @@ class RenPyParser:
         if game_folder.exists() and game_folder.is_dir():
             self.logger.info(f"Targeting 'game' folder within selected directory: {game_folder}")
             return game_folder
+        
+        # Linux fallback for Game/ folder
+        game_folder_alt = directory / "Game"
+        if game_folder_alt.exists() and game_folder_alt.is_dir():
+            self.logger.info(f"Targeting 'Game' folder within selected directory: {game_folder_alt}")
+            return game_folder_alt
         return directory
 
     def _is_excluded_rpy(self, file_path: Path, search_root: Path) -> bool:
@@ -2050,19 +2084,30 @@ class RenPyParser:
         
         # Skip Python format strings like {:,}, {:3d}, {}, {}Attitude:{} {}, etc.
         # These are used for number/string formatting and should not be translated
+        # v2.7.2: Distinguish Ren'Py display tags from Python format placeholders
+        # Ren'Py tags: {color=#f00}, {b}, {/b}, {i}, {size=24}, {cps=20}, {w}, {p}, {nw}
+        # Python fmt:  {}, {:3d}, {0}, {name}, {:,}
         if '{' in text_strip:
-            # Count format placeholders
-            format_count = len(re.findall(r'\{[^}]*\}', text_strip))
-            if format_count >= 1:
-                # Remove format placeholders and check remaining content
+            # Count ONLY Python format placeholders (not Ren'Py display tags)
+            all_braces = re.findall(r'\{([^}]*)\}', text_strip)
+            py_format_count = 0
+            for inner_brace in all_braces:
+                stripped_inner = inner_brace.strip()
+                # Ren'Py tags: start with letter or / (color, b, i, size, /color, /b etc.)
+                if re.match(r'^/?[a-zA-Z]', stripped_inner):
+                    continue  # It's a Ren'Py display tag, skip
+                # Empty {} or format specs like :3d, :, etc. are Python format
+                py_format_count += 1
+            
+            if py_format_count >= 1:
+                # Remove ALL brace content and check remaining
                 remaining = re.sub(r'\{[^}]*\}', '', text_strip).strip()
-                # If remaining has no meaningful words (at least 2 letters for non-Latin, 3 for Latin), skip
                 has_cyrillic = bool(re.search(r'[а-яА-ЯёЁ]', remaining))
                 min_len = 2 if has_cyrillic else 3
                 if not any(ch.isalpha() for ch in remaining) or len(remaining) < min_len:
                     return False
                 # If format placeholders dominate the string (2+ placeholders with short remaining), skip
-                if format_count >= 2 and len(remaining) < 10:
+                if py_format_count >= 2 and len(remaining) < 10:
                     return False
 
         # --- O(1) Optimization: Use Pre-compiled Regex ---
@@ -2131,7 +2176,9 @@ class RenPyParser:
 
         # --- NEW: Expression / Concatenation Detection ---
         # Strings like '"inventory/" + i.img' or '"part" + str(val)'
-        if ('"' in text_strip or "'" in text_strip) and ('+' in text_strip or 'str(' in text_strip or 'int(' in text_strip):
+        # FIX: Ensure '+' is not just part of a Ren'Py tag (e.g., {size=+10})
+        _no_tags_concat = re.sub(r'\{/?[^}]*\}', '', text_strip)
+        if ('"' in text_strip or "'" in text_strip) and ('+' in _no_tags_concat or 'str(' in text_strip or 'int(' in text_strip):
             return False
             
         # Reject obvious function calls or code-like literals captured as strings
@@ -2226,6 +2273,11 @@ class RenPyParser:
         if '=' in _no_tags_for_param and re.search(r'\b(size|color|font|outlines|xalign|yalign|xpos|ypos|style|textalign)\s*=', _no_tags_for_param, re.IGNORECASE):
             return False
         
+        # v2.7.2: Skip purely technical snake_case strings that are definitely IDs
+        # e.g., "game_state", "player_name", "bg_forest" — always technical identifiers
+        if text_strip.islower() and '_' in text_strip and ' ' not in text_strip:
+            return False
+
         # 4. Reject NVL mode technical commands
         # Example: "clear", "show", "hide" when used alone
         nvl_commands = {'clear', 'show', 'hide', 'menu', 'nvl'}
@@ -2233,6 +2285,39 @@ class RenPyParser:
             return False
 
         return any(ch.isalpha() for ch in text) and len(text.strip()) >= 2
+
+    def _is_meaningful_data_value(self, text: str, key: str = None) -> bool:
+        """Helper to filter data values (JSON/YAML/INI etc) with key context."""
+        if not text or not isinstance(text, str):
+            return False
+        
+        # Strip simple numbers or single chars
+        text_strip = text.strip()
+        if len(text_strip) < 2 and text_strip not in STANDARD_RENPY_STRINGS:
+            return False
+            
+        # Fast exit for path-like structures
+        if any(ind in text_strip for ind in self.path_indicators):
+            return False
+            
+        # Key heuristics
+        if key and isinstance(key, str):
+            key_lower = key.lower().strip()
+            
+            # 1. Whitest check highest priority
+            if any(key_lower == w or key_lower.endswith('_' + w) for w in DATA_KEY_WHITELIST):
+                return self.is_meaningful_text(text)
+                
+            # 2. Blacklist check
+            if any(key_lower == b or key_lower.endswith('_' + b) for b in DATA_KEY_BLACKLIST):
+                return False
+                
+            # 3. Check for obvious config names
+            if key_lower.startswith('config') or key_lower.endswith('config'):
+                return False
+        
+        # Fallback to main heuristic
+        return self.is_meaningful_text(text)
 
 
 
@@ -3389,9 +3474,9 @@ class RenPyParser:
         results: Dict[Path, List[Dict[str, Any]]] = {}
         
         if recursive:
-            iterator = search_root.glob("**/*.rpy")
+            iterator = list(search_root.glob("**/*.rpy")) + list(search_root.glob("**/*.RPY"))
         else:
-            iterator = search_root.glob("*.rpy")
+            iterator = list(search_root.glob("*.rpy")) + list(search_root.glob("*.RPY"))
         
         rpy_files = [f for f in iterator if not self._is_excluded_rpy(f, search_root)]
         

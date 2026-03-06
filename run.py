@@ -96,6 +96,10 @@ def global_exception_handler(exc_type, exc_value, exc_traceback):
     import traceback
     import datetime
     
+    if issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+
     error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
     timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
     
@@ -304,19 +308,23 @@ def main() -> int:
         app.setApplicationVersion(VERSION)
 
         # Set application icon
-        icon_path = resolve_asset_path("icon.ico")
+        # Primary: icon.png (Linux/macOS), Fallback: icon.ico (Windows)
+        potential_icons = ["icon.png", "icon.ico"]
         app_icon = QIcon()
         
-        if icon_path.exists():
-            print(f"[INFO] Loading icon from: {icon_path}")
-            app_icon = QIcon(str(icon_path))
-            if not app_icon.isNull():
-                app.setWindowIcon(app_icon)
-                print("[INFO] Icon loaded successfully.")
-            else:
-                 print("[WARNING] Icon file exists but QIcon failed to load it.")
-        else:
-             print(f"[WARNING] Icon file not found at: {icon_path}")
+        for icon_name in potential_icons:
+            icon_path = resolve_asset_path(icon_name)
+            if icon_path.exists():
+                print(f"[INFO] Loading icon from: {icon_path}")
+                temp_icon = QIcon(str(icon_path))
+                if not temp_icon.isNull():
+                    app_icon = temp_icon
+                    app.setWindowIcon(app_icon)
+                    print(f"[INFO] {icon_name} loaded successfully.")
+                    break
+        
+        if app_icon.isNull():
+             print("[WARNING] No suitable icon file found or failed to load.")
 
         # Initialize Logic
         config_manager = ConfigManager()
@@ -364,42 +372,61 @@ def main() -> int:
         # Force icon on the root window (Fix for Windows taskbar)
         if engine.rootObjects():
             root_window = engine.rootObjects()[0]
-            if icon_path.exists() and not app_icon.isNull():
+            
+            # Use native PyQt6 setIcon on QQuickWindow directly
+            if not app_icon.isNull():
                 root_window.setIcon(app_icon)
-                # app.setWindowIcon(app_icon) # Redundant
             
-            # Explicitly force window creation to get HWND before showing
-            # This ensures the icon is applied at the OS level before the window appears
-            if sys.platform == "win32" and icon_path.exists():
-                try:
-                    import ctypes
-                    from ctypes import wintypes
-                    
-                    # Force native window handling
-                    hwnd = root_window.winId()
-                    
-                    user32 = ctypes.windll.user32
-                    ICON_SMALL = 0
-                    ICON_BIG = 1
-                    WM_SETICON = 0x80
-                    
-                    # Load from file directly using LoadImageW
-                    # LR_LOADFROMFILE = 0x10, IMAGE_ICON = 1
-                    h_icon_big = user32.LoadImageW(None, str(icon_path), 1, 0, 0, 0x10)
-                    h_icon_small = user32.LoadImageW(None, str(icon_path), 1, 0, 0, 0x10)
-                    
-                    if h_icon_big:
-                        user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_icon_big)
-                    if h_icon_small:
-                        user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_icon_small)
-                        
-                except Exception as e:
-                    print(f"Warning: Failed to set native Windows icon: {e}")
-
-            # Show window AFTER setting native icons
+            # Step 1: Show window FIRST so Windows creates a real HWND
             root_window.show()
+            app.processEvents()
             
-            # Process events immediately to flush icon changes
+            # Step 2: Apply native Windows icon via ctypes (most reliable for taskbar)
+            icon_path = resolve_asset_path("icon.ico")
+            if sys.platform == "win32" and icon_path.exists():
+                def _apply_native_icon():
+                    """Apply icon via Win32 API after HWND is fully initialized."""
+                    try:
+                        import ctypes
+                        from ctypes import wintypes
+                        
+                        user32 = ctypes.windll.user32
+                        WM_SETICON = 0x80
+                        ICON_SMALL = 0  # 16x16 — title bar, taskbar
+                        ICON_BIG = 1    # 32x32 — Alt+Tab, taskbar hover
+                        
+                        # Get HWND with proper int cast (winId() returns sip.voidptr)
+                        hwnd = int(root_window.winId())
+                        if not hwnd:
+                            print("[WARNING] HWND is 0, window not yet realized")
+                            return
+                        
+                        icon_str = str(icon_path)
+                        # LR_LOADFROMFILE = 0x10, IMAGE_ICON = 1
+                        # Explicit sizes: 16x16 for small, 32x32 for big
+                        h_icon_small = user32.LoadImageW(
+                            None, icon_str, 1, 16, 16, 0x10
+                        )
+                        h_icon_big = user32.LoadImageW(
+                            None, icon_str, 1, 32, 32, 0x10
+                        )
+                        
+                        if h_icon_small:
+                            user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_icon_small)
+                        if h_icon_big:
+                            user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_icon_big)
+                            
+                    except Exception as e:
+                        print(f"[WARNING] Failed to set native Windows icon: {e}")
+                
+                # Apply immediately after show
+                _apply_native_icon()
+                
+                # Insurance: reapply after 150ms in case QML recreates the window handle
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(150, _apply_native_icon)
+            
+            # Process events to flush all icon changes
             app.processEvents()
 
         print("[OK] UI loaded successfully. Entering event loop.")

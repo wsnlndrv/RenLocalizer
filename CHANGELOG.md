@@ -1,5 +1,71 @@
 ﻿# RenLocalizer Changelog
 
+## [2.7.2] - 2026-03-04
+
+### New Feature: Local & Self-hosted Machine Translation
+- **LibreTranslate Integration**: Added full native support for **LibreTranslate**, enabling 100% offline, privacy-friendly translations via local or self-hosted instances.
+- **File-by-File Translation Generation**: Extracted strings now mirror the original project structure. Instead of a single `strings.rpy`, RenLocalizer creates separate files (e.g. `script.rpy`, `options.rpy`) in the `tl/` folder, ensuring better organization and Ren'Py compatibility.
+- **Apertium & Argos Compatibility**: The new translator engine supports standard `POST /translate` protocols (Apertium, Argos Translate, etc.), making it highly extensible.
+- **Improved Settings UI**: Added a dedicated LibreTranslate configuration section in the Settings page with **Preset Selectors** (Local, Cloud, Apertium, Custom) and connection testing.
+- **Expanded Language Support**: Increased the supported language list for LibreTranslate to over 45 languages, ensuring global applicability.
+### Improvements: Smart Language Detection (v2.0)
+- **Syntax Noise Stripping**: The auto-detect engine now strips all Ren'Py tags (`{color}`, `{b}`), variables (`[name]`), and placeholder keys (`<RLPH...>`) before analyzing text. This prevents translation engines from getting confused by code syntax and failing to detect the language.
+- **Short String Aggregation**: Fixed a major flaw where source files with only short strings (under 30 characters, like "Start", "Load", "Options") would fail language detection and default to "auto", leading to untranslated words. The engine now intelligently concatenates short strings into larger, mathematically analyzable blocks to guarantee accurate detection.
+- **Progressive Confidence Thresholds**: Upgraded the voting system to use dynamic thresholds. An absolute majority of >70% is instantly accepted, and a relative majority of >40% is also accepted if it beats the runner-up by a massive margin (>=25%), virtually eliminating unnecessary fallback states.
+
+### Fixed: GUI & Settings Persistence
+- **ComboBox Initialization Bug**: Fixed an issue in `HomePage.qml` where the Source Language, Target Language, and Engine selection boxes would instantly overwrite the user's saved preferences with default values (`index: 0`) during application startup due to the `onCurrentValueChanged` signal firing prematurely. Switched to `onActivated` so settings are only saved upon explicit user interaction.
+
+### Improvements: Context-Aware Translation (Local LLM)
+- **Enhanced LLM Context Support**: Added descriptive metadata and improved instructions for Local LLM engines (Ollama, LM Studio, etc.) to help them better handle dialogue context, formal/informal nuances, and "You/Thou" distinctions.
+- **Dynamic Connection Management**: Fixed a backend logic error where changing translator URLs (Local LLM/LibreTranslate) required an app restart. Engines now re-initialize instantly when settings are updated.
+- **CLI Engine Support**: Expanded the CLI with the `--engine libretranslate` flag, enabling automated batch translation via local servers.
+
+
+### Refinement: Proxy System
+- **Free Proxy Fetching Removal**: Removed unreliable free proxy fetching logic (GeoNode, scraping) to focus on personal and manual proxies.
+- **Connection Testing Focus**: The system now prioritizes stability over quantity. "Refresh" functionality has been converted to "Test Connections".
+- **Enhanced Reliability**: Improved proxy testing batches and sorting; personal proxies are now kept even if individual health checks fail (user preference priority).
+- **UI/UX Updates**: Simplified proxy settings interface and clarified status messages across all languages.
+
+### Improvements: Syntax Guard & Corruption Prevention
+- **Fuzzy Suffix Recovery (Google Halucination Fix)**: Solved a critical issue where AI translation engines (specifically Google) maliciously hallucinated or mutated placeholder keys (`⟦RLPH...⟧` into `⟦RLLPH...⟧` or altered hex values). The restorer now features a dynamic fallback mechanism that matches tokens by their unique suffix index (`_0`, `_G0`) if the main string body is corrupted, completely eliminating `placeholder_remnant` corruption skips.
+- **Hex Mutation Catcher**: Expanded token recovery regex from strictly Hexadecimal `[A-F0-9]` to `[A-Z0-9]` to reliably catch OCR-style mutations inserted by translation engines (e.g., transforming a zero into an 'O' or 'L').
+- **Non-strict Tag Nesting Repair**: Rewrote the `_repair_broken_tag_nesting` logic. Previously, it strictly deleted any closing tag that didn't immediately match the last opened tag (causing `renpy_tag_set_mismatch` errors on intentionally unclosed author tags like `{size=10}OK{/font}`). It now performs algorithmic stack traversing (unwinding) to properly find paired root tags, preserving formatting integrity while safely dealing with orphans.
+
+### Fixed: Critical Pipeline Bugs
+- **Duplicate Translation Defense**: Fixed a critical bug where the "Auto-Export" feature created redundant `zz_rl_exported_...rpy` files containing strings already defined in regular `.rpy` files, causing Ren'Py to crash.
+- **Flexible Language Codes**: LibreTranslate engine now correctly handles non-standard ISO codes (e.g. `fil`, `ber`) and regional variants with more than 5 characters.
+- **Atomic Template Writing**: Applied robust atomic file writing to the initial translation creation process, preventing zero-byte or corrupted `.rpy` files during high-volume extractions.
+
+### Fixed: Linux & Cross-Platform Compatibility
+- **Case-Insensitivity Fixes**: Implemented case-insensitive file and directory searching for Linux environments, covering `.rpa`/`.RPA` archives, `.rpy`/`.RPY` scripts, and `game`/`Game` folder naming.
+- **Improved Translation Pipeline**: Fixed "translate strings: expects non-empty block" crash in generated `.rpy` files.
+- **Robust Path Mirroring**: Improved path mirroring for engine-common translation files safely jailed inside `tl/` subfolders.
+- **Automatic Skipping**: Added automatic skipping of translation files with zero translatable entries.
+- **Path Resolution Improvements**: Enhanced path normalization (`urllib.parse.unquote`, `os.path.normpath`) to correctly handle space-containing paths and `file:///` URIs across different OS file systems.
+- **GUI Stability**: Fixed `TypeError` exceptions in QML during startup on Linux by implementing null-checks for the `backend` context property and correcting path display logic.
+- **Icon Handling**: Added support for `.png` icons and platform-specific guards for Windows-only `ctypes` calls, preventing crashes and display errors on Linux.
+
+### New: Cross-Platform Packaging
+- **Linux AppImage**: Linux builds are now packaged as `.AppImage` files — single-file, double-click-to-run executables that work on any distribution without installation.
+- **macOS DMG**: macOS builds are now packaged as `.dmg` disk images with a proper `.app` bundle and drag-and-drop `/Applications` install support.
+- **CI/CD Pipeline**: Updated GitHub Actions workflow to produce platform-native packages (Windows ZIP, Linux AppImage, macOS DMG) in parallel.
+
+### Improvements: Ren'Py Extraction Engine
+- **Custom Gallery Capture**: Support for `gallery.button`, `gallery_gup.button`, and `unlock_image` custom object methods.
+- **Enhanced Constant Detection**: Fixed a logic error in uppercase constant scoring. Long or meaningful uppercase constants (e.g., `MISSION_DESCRIPTION`) are now captured while technical IDs (e.g., `state_enum`) are filtered.
+- **Robust False Positive Prevention**: Global passes (Pyparsing/TokenStream) now respect the variable analyzer, preventing internal state variables and technical identifiers from leaking into the translation strings.
+- **Blacklist Expansion**: Added `show_screen`, `hide_screen`, and other technical Ren'Py API calls to the extraction blacklist.
+- **Smarter Path/ID Filtering**: Improved `is_meaningful_text` heuristics to automatically skip snake_case strings and technical path fragments.
+
+### Improvements: RPYC Binary Extraction
+- **Python 2 Pickle Compatibility**: Added multi-encoding fallback (`ASCII` → `latin-1` → `bytes`) for unpickling old Ren'Py games compiled with Python 2.
+- **Slot Fallback**: RPYC reader now tries slot 2 if slot 1 is missing, improving compatibility with non-standard archive layouts.
+- **Obfuscation Detection**: Non-standard magic numbers and decompression failures now produce user-friendly warnings instead of cryptic errors.
+- **V1 Decompression Fallback**: If v2 slot-based decompression fails, the reader automatically retries treating the file as raw zlib (v1 format).
+- **Dead Code Cleanup**: Removed duplicate `find_class` definition and duplicate CLASS_MAP entries for SLDrag/SLOnEvent/SLBar.
+
 ## [2.7.1] - 2025-06-14
 
 ### Bug Fixes

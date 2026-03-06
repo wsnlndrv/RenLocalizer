@@ -14,7 +14,9 @@ ApplicationWindow {
     height: 800
     minimumWidth: 900
     minimumHeight: 600
-    title: (backend.uiTrigger, backend.getTextWithDefault("app_title", "RenLocalizer") + " v" + backend.version)
+    title: (typeof backend !== "undefined" && backend !== null) 
+           ? (backend.uiTrigger, backend.getTextWithDefault("app_title", "RenLocalizer") + " v" + backend.version) 
+           : "RenLocalizer"
 
     // Global Theme Colors Manager
     readonly property var currentTheme: settingsBackend.currentTheme

@@ -7,12 +7,16 @@ This module provides the bridge between QML UI and Python backend logic.
 All QML-callable methods and signals are defined here.
 """
 
+import logging
 import os
 import sys
-import logging
 import threading
 import asyncio
+import json
 import time
+import webbrowser
+import urllib.parse
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
@@ -181,6 +185,15 @@ class AppBackend(QObject):
             config_manager=self.config
         )
         self.translation_manager.add_translator(TranslationEngine.LOCAL_LLM, local_translator)
+
+        # 7. LibreTranslate
+        from src.core.translator import LibreTranslateTranslator
+        lt_translator = LibreTranslateTranslator(
+            base_url=getattr(self.config.translation_settings, 'libretranslate_url', 'http://localhost:5000'),
+            api_key=getattr(self.config.translation_settings, 'libretranslate_api_key', ''),
+            config_manager=self.config
+        )
+        self.translation_manager.add_translator(TranslationEngine.LIBRETRANSLATE, lt_translator)
     
     @pyqtSlot()
     def refreshUI(self):
@@ -247,6 +260,7 @@ class AppBackend(QObject):
             {"code": "gemini", "name": self.config.get_ui_text("translation_engines.gemini", "✨ Google Gemini")},
 
             {"code": "local_llm", "name": self.config.get_ui_text("translation_engines.local_llm", "🖥️ Local LLM")},
+            {"code": "libretranslate", "name": self.config.get_ui_text("translation_engines.libretranslate", "🌐 LibreTranslate (Local)")},
         ]
         
         # Pseudo motorunu debug modunda göster
@@ -561,11 +575,17 @@ class AppBackend(QObject):
     @pyqtSlot(str)
     def setProjectPath(self, path: str):
         """Proje klasörünü ayarla."""
+        # Unquote URL encoding (%20 -> space etc)
+        path = urllib.parse.unquote(path)
+        
         if path.startswith("file:///"):
             if sys.platform == "win32":
                 path = path[8:]
             else:
                 path = path[7:]
+        
+        # Replace OS-specific separators
+        path = os.path.normpath(path)
         
         self.config.app_settings.last_input_directory = path
         self._project_path = path  # Update internal state
@@ -574,8 +594,14 @@ class AppBackend(QObject):
 
         # Validate
         project_dir = os.path.dirname(path) if os.path.isfile(path) else path
-        game_dir = os.path.join(project_dir, 'game')
         
+        # Check for 'game' or 'Game' directory (Case-sensitivity on Linux)
+        game_dir = os.path.join(project_dir, 'game')
+        if not os.path.isdir(game_dir):
+            alt_game_dir = os.path.join(project_dir, 'Game')
+            if os.path.isdir(alt_game_dir):
+                game_dir = alt_game_dir
+
         if os.path.isdir(game_dir):
             self.logMessage.emit("info", "✅ " + self.config.get_ui_text("valid_renpy_project", "Valid Ren'Py project"))
         else:
@@ -646,13 +672,20 @@ class AppBackend(QObject):
 
         threading.Thread(target=run_setup, daemon=True).start()
     
+    @pyqtSlot(result=str)
+    def getSourceLanguage(self) -> str:
+        return self._source_language
+
     @pyqtSlot(str)
     def setSourceLanguage(self, lang: str):
         """Kaynak dili ayarla."""
         self._source_language = lang
         self.config.translation_settings.source_language = lang
         self.config.save_config()
-    
+    @pyqtSlot(result=str)
+    def getTargetLanguage(self) -> str:
+        return self._target_language
+
     @pyqtSlot(str)
     def setTargetLanguage(self, lang: str):
         """Hedef dili ayarla."""
@@ -930,6 +963,7 @@ class AppBackend(QObject):
             "openai": TranslationEngine.OPENAI,
             "gemini": TranslationEngine.GEMINI,
             "local_llm": TranslationEngine.LOCAL_LLM,
+            "libretranslate": TranslationEngine.LIBRETRANSLATE,
             "pseudo": TranslationEngine.PSEUDO,
         }
         return mapping.get(engine_str, TranslationEngine.GOOGLE)
@@ -1053,6 +1087,16 @@ class AppBackend(QObject):
                 DeepLTranslator(
                     api_key=self.config.api_keys.deepl_api_key,
                     proxy_manager=self.proxy_manager,
+                    config_manager=self.config
+                )
+            )
+        elif engine == TranslationEngine.LIBRETRANSLATE:
+            from src.core.translator import LibreTranslateTranslator
+            self.translation_manager.add_translator(
+                TranslationEngine.LIBRETRANSLATE,
+                LibreTranslateTranslator(
+                    base_url=ts.libretranslate_url or "http://localhost:5000",
+                    api_key=ts.libretranslate_api_key or "",
                     config_manager=self.config
                 )
             )

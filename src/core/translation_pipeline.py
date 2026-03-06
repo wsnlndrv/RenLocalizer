@@ -109,7 +109,7 @@ class TranslationPipeline(QObject):
         rpymc_files = []
         for root, dirs, files in os.walk(directory):
             for f in files:
-                if f.endswith('.rpymc'):
+                if f.lower().endswith('.rpymc'):
                     rpymc_files.append(os.path.join(root, f))
         return rpymc_files
 
@@ -495,11 +495,18 @@ class TranslationPipeline(QObject):
         
         tl_dir = os.path.join(game_dir, 'tl', self.target_language)
         
-        # Zaten varsa atla
+        # Zaten varsa atla - Fakat kaynak dosyalar güncellenmişse tekrar çıkar
+        needs_extract = False
         if not os.path.isdir(tl_dir) or not self._has_rpy_files(tl_dir):
+            needs_extract = True
+        elif self._needs_re_extraction(game_dir, tl_dir):
+            self.log_message.emit("info", self.config.get_ui_text("pipeline_source_updated", "Source files updated. Re-extracting translations for {lang}...").replace("{lang}", str(self.target_language)))
+            needs_extract = True
+            
+        if needs_extract:
             success = self._run_translate_command(project_path)
             
-            if not success:
+            if not success and not os.path.isdir(tl_dir):
                 return PipelineResult(
                     success=False,
                     message=self.config.get_ui_text("pipeline_translate_failed"),
@@ -632,6 +639,15 @@ class TranslationPipeline(QObject):
                 self._generate_strings_json(tl_files, lang_dir)
                 
                 self._manage_runtime_hook()
+                
+                # Dosya bazlı dışa aktarımı otomatik ve varsayılan yap
+                try:
+                    from src.core.exporter import export_strings_to_rpy
+                    if export_strings_to_rpy(str(game_dir), renpy_lang):
+                        self.log_message.emit("info", "Auto-exported translation strings to classic .rpy files.")
+                except Exception as e:
+                    self.logger.warning(f"Auto-export to RPY failed: {e}")
+                    
             return PipelineResult(
                 success=True,
                 message=self.config.get_ui_text("pipeline_all_already_translated"),
@@ -739,6 +755,14 @@ class TranslationPipeline(QObject):
             self._generate_strings_json(tl_files_updated, lang_dir, extra_translations=translations)
             
             self._manage_runtime_hook()
+            
+            # Dosya bazlı dışa aktarımı otomatik ve varsayılan yap
+            try:
+                from src.core.exporter import export_strings_to_rpy
+                if export_strings_to_rpy(str(game_dir), renpy_lang):
+                    self.log_message.emit("info", "Auto-exported translation strings to classic .rpy files.")
+            except Exception as e:
+                self.logger.warning(f"Auto-export to RPY failed: {e}")
 
         self._set_stage(PipelineStage.COMPLETED, self.config.get_ui_text("stage_completed"))
         summary = self.config.get_ui_text("pipeline_completed_summary").replace("{translated}", str(len(translations))).replace("{saved}", str(saved_count))
@@ -765,7 +789,7 @@ class TranslationPipeline(QObject):
         """Klasörde .rpy dosyası var mı?"""
         for root, dirs, files in os.walk(directory):
             for f in files:
-                if f.endswith('.rpy'):
+                if f.lower().endswith('.rpy'):
                     return True
         return False
     
@@ -773,7 +797,7 @@ class TranslationPipeline(QObject):
         """Klasörde .rpyc dosyası var mı?"""
         for root, dirs, files in os.walk(directory):
             for f in files:
-                if f.endswith('.rpyc'):
+                if f.lower().endswith('.rpyc'):
                     return True
         return False
     
@@ -781,9 +805,46 @@ class TranslationPipeline(QObject):
         """Klasörde .rpa arşiv dosyası var mı?"""
         for root, dirs, files in os.walk(directory):
             for f in files:
-                if f.endswith('.rpa'):
+                if f.lower().endswith('.rpa'):
                     return True
         return False
+
+    def _needs_re_extraction(self, game_dir: str, tl_dir: str) -> bool:
+        """
+        Geliştirici oyun dosyalarını (.rpy/.rpyc) güncellediğinde, tl/ klasöründeki mevcut 
+        çevirilerden (genelde strings.json veya tl/*.rpy) daha yeni olup olmadığını kontrol eder.
+        Eğer daha yeni kaynak dosyalar varsa True döndürür ve yeniden extract yapılmasını zorlar.
+        """
+        try:
+            tl_mtime = 0
+            # tl_dir içindeki dosyaların en yeni deðişme zamanını bul
+            for root, dirs, files in os.walk(tl_dir):
+                for f in files:
+                    if f.lower().endswith('.rpy'):
+                        fmtime = os.path.getmtime(os.path.join(root, f))
+                        if fmtime > tl_mtime:
+                            tl_mtime = fmtime
+            
+            # Nếu tl_dir boşsa klasörün mtime'ını kullan
+            if tl_mtime == 0:
+                tl_mtime = os.path.getmtime(tl_dir)
+                
+            # Şimdi game_dir içindeki (tl klasörü hariç) .rpy/.rpyc dosyalarına bak
+            for root, dirs, files in os.walk(game_dir):
+                # tl ve renpy klasörlerini atla
+                if 'tl' in dirs:
+                    dirs.remove('tl')
+                dirs[:] = [d for d in dirs if d.lower() != 'renpy']
+                for f in files:
+                    if f.lower().endswith('.rpy') or f.lower().endswith('.rpyc'):
+                        fmtime = os.path.getmtime(os.path.join(root, f))
+                        # Eğer herhangi bir oyun scripti, tl dosyasından DAHA YENİ ise güncelleme gelmiştir!
+                        if fmtime > tl_mtime:
+                            return True
+            return False
+        except Exception as e:
+            self.logger.debug(f"mtime check failed: {e}")
+            return False
 
     def _normalize_tl_encodings(self, tl_dir: str) -> int:
         """
@@ -1619,17 +1680,16 @@ init python:
                 # tl klasörünü atla
                 if 'tl' in dirs:
                     dirs.remove('tl')
+                    
+                # GÜVENLİK: 'renpy' adlı klasörleri tamamen atla (içine girme)
+                dirs[:] = [d for d in dirs if d.lower() != 'renpy']
                 
                 for filename in files:
-                    if not filename.endswith('.rpy'):
+                    if not filename.lower().endswith('.rpy'):
                         continue
 
                     filepath = os.path.join(root, filename)
 
-                    # GÜVENLİK: 'renpy/' klasörü altındaki dosyaları ASLA değiştirme!
-                    if os.path.sep + 'renpy' + os.path.sep in filepath or filepath.endswith(os.path.sep + 'renpy'):
-                        continue
-                    
                     try:
                         # Her dosya için yedek oluştur
                         # GÜVENLİK YAMASI: Yedekleme
@@ -1987,7 +2047,7 @@ init python:
                     for root, dirs, files in os.walk(lang_tl_path):
                         for filename in files:
                             # Skip compiled files
-                            if not filename.endswith('.rpy'):
+                            if not filename.lower().endswith('.rpy'):
                                 continue
                             
                             filepath = os.path.join(root, filename)
@@ -2047,77 +2107,92 @@ init python:
                     elif not existing.get('is_deep_scan') and entry.get('is_deep_scan'):
                         seen_map[text] = entry
 
-            all_entries = list(seen_map.values())
+            # 4. Group strings by file for separate .rpy generation
+            # Ren'Py allows multiple 'translate strings:' blocks across different files.
+            # To avoid duplicates (which cause Ren'Py to crash), we MUST only define each string ONCE.
+            # We'll assign each unique string to the FIRST source file it was found in.
+            file_groups = {} # {rel_path: [entries]}
+            seen_texts = set()
             
-            self.log_message.emit("info", self.config.get_log_text('unique_texts_found', count=len(all_entries)))
-            
-            # Tüm stringleri tek strings.rpy dosyasına yaz
-            if all_entries:
+            # Add existing global strings (found in other .rpy files) to seen_texts
+            # to prevent defining them again in NEW files.
+            for t in existing_global_strings:
+                seen_texts.add(t)
+
+            for entry in source_texts:
+                text = entry.get('text', '')
+                if not text or text in seen_texts:
+                    continue
+                
+                # Determine relative file path for mirroring
+                file_path = entry.get('file_path', '')
                 try:
-                    # Pass renpy_lang to ensure correct header in strings.rpy
-                    strings_content = self._generate_all_strings_file(all_entries, game_dir, lang_name=renpy_lang)
-                    if strings_content:
-                        # Atomic Write Pattern: Write to temp -> Rename
-                        # This prevents file corruption if the process crashes during write
-                        strings_path = os.path.join(tl_dir, 'strings.rpy')
-                        temp_path = strings_path + '.tmp'
-                        
-                        # Phase 1: Write to temp file (Critical IO)
-                        try:
-                            with open(temp_path, 'w', encoding='utf-8-sig', newline='\n') as f:
-                                f.write(strings_content)
-                                f.flush()
-                                os.fsync(f.fileno()) # Force write to physical disk
-                        except Exception as write_err:
-                            self.logger.error(f"Failed to write to temp file {temp_path}: {write_err}")
-                            if os.path.exists(temp_path):
-                                try:
-                                    os.remove(temp_path)
-                                except Exception:
-                                    pass
-                            raise write_err
-
-                        # Phase 2: Robust Atomic Swap (Retry Loop)
-                        # Handles occasional 'Access Denied' due to AV/Scanners locking the file
-                        success = False
-                        rename_error = None
-                        max_retries = 5
-                        
-                        for i in range(max_retries):
-                            try:
-                                if os.path.exists(strings_path):
-                                    os.replace(temp_path, strings_path)
-                                else:
-                                    os.rename(temp_path, strings_path)
-                                success = True
-                                break # Success, exit loop
-                            except OSError as e:
-                                rename_error = e
-                                # Simple backoff: 0.1, 0.2, 0.3s...
-                                time.sleep(0.1 + (i * 0.1))
-                        
-                        if not success:
-                            # CRITICAL: Do NOT delete the temp file. Save the user's data!
-                            err_msg = (
-                                f"CRITICAL FILE ERROR: Could not rename '{os.path.basename(temp_path)}' to 'strings.rpy' after {max_retries} attempts.\n"
-                                f"Access Denied or File Locked.\n"
-                                f"YOUR DATA IS SAFE HERE: {temp_path}\n"
-                                f"Please manually rename this file to 'strings.rpy'."
-                            )
-                            self.log_message.emit("error", err_msg)
-                            # We raise the error to notify the pipeline, but the file is preserved
-                            if rename_error:
-                                raise rename_error
-                            else:
-                                raise OSError("Unknown rename failure")
-
-                        self.log_message.emit("info", self.config.get_log_text('strings_rpy_created', count=len(all_entries)))
-                        return True
-                except Exception as e:
-                    self.log_message.emit("error", self.config.get_log_text('strings_rpy_error', error=str(e)))
-                    return False
+                    # v2.7.2: Robust path mirroring for separate .rpy generation
+                    # If file is outside game(e.g. renpy/common), map it to a safe internal folder
+                    if game_dir in file_path:
+                        rel_path = os.path.relpath(file_path, game_dir)
+                    else:
+                        # Map engine common folders to internal safe mirror paths
+                        # e.g. .../renpy/common/00sync.rpy -> _engine/common/00sync.rpy
+                        if 'renpy' in file_path and 'common' in file_path:
+                            rel_path = os.path.join('_engine', 'common', os.path.basename(file_path))
+                        else:
+                            rel_path = 'external_libs.rpy'
+                    
+                    # Convert to .rpy in tl folder
+                    rel_path = os.path.splitext(rel_path)[0] + '.rpy'
+                    # Strip any leading '..' or '/' to prevent path traversal outside tl directory
+                    rel_path = rel_path.lstrip('./\\')
+                except Exception:
+                    rel_path = 'strings.rpy'
+                
+                if rel_path not in file_groups:
+                    file_groups[rel_path] = []
+                
+                file_groups[rel_path].append(entry)
+                seen_texts.add(text)
             
-            return False
+            if not file_groups:
+                self.log_message.emit("info", "No new strings to generate for translation files.")
+                return True
+
+            self.log_message.emit("info", f"Generating {len(file_groups)} separate translation files for {renpy_lang}...")
+            
+            # 5. Generate and write each file
+            generated_count = 0
+            total_entries_count = 0
+            
+            for rel_path, entries in file_groups.items():
+                if self.should_stop: return False
+                
+                try:
+                    content = self._generate_all_strings_file(entries, game_dir, lang_name=renpy_lang)
+                    if not content: continue
+                    
+                    full_path = os.path.normpath(os.path.join(tl_dir, rel_path))
+                    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                    
+                    # Atomic Write
+                    temp_path = full_path + '.tmp'
+                    with open(temp_path, 'w', encoding='utf-8-sig', newline='\n') as f:
+                        f.write(content)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    
+                    if os.path.exists(full_path):
+                        os.replace(temp_path, full_path)
+                    else:
+                        os.rename(temp_path, full_path)
+                    
+                    generated_count += 1
+                    total_entries_count += len(entries)
+                    
+                except Exception as fe:
+                    self.logger.error(f"Failed to generate {rel_path}: {fe}")
+                    continue
+            
+            self.log_message.emit("success", f"Successfully created {generated_count} translation files ({total_entries_count} unique strings total).")
+            return True
                 
         except Exception as e:
             self.log_message.emit("error", self.config.get_log_text('translation_file_error', error=str(e)))
@@ -2143,11 +2218,11 @@ init python:
         lines.append("")
         
         target_lang = lang_name if lang_name else self.target_language
-        lines.append(f"translate {target_lang} strings:")
-        lines.append("")
         
         rel_path_cache = {}
         seen_texts = set()
+        entries_added = 0
+        
         for i, entry in enumerate(entries):
             text = entry.get('text', '')
             if not text or formatter._should_skip_translation(text):
@@ -2162,7 +2237,6 @@ init python:
             file_path = entry.get('file_path', '')
             line_num = entry.get('line_number', 0)
             character = entry.get('character', '')
-            # 'type' is not standard in parser.py output, it uses 'text_type'
             text_type = entry.get('text_type', 'unknown')
             is_nontranslatable_identifier = self._is_nontranslatable_identifier_entry(entry)
             
@@ -2179,6 +2253,9 @@ init python:
                         rel_path = os.path.abspath(file_path)
                 rel_path_cache[file_path] = rel_path
             
+            # Start gathering the actual strings before the header to determine if any exist
+            entry_lines = []
+            
             # Kaynak bilgisi ve karakter adını yorum olarak ekle
             comment_parts = [f"{rel_path}:{line_num}"]
             if character:
@@ -2188,31 +2265,21 @@ init python:
             if entry.get('is_engine_common'):
                 comment_parts.append('[engine_common]')
             
-            lines.append(f"    # {' '.join(comment_parts)}")
+            entry_lines.append(f"    # {' '.join(comment_parts)}")
+            
             # Check cache for existing translation to support seamless resume
             cached_translation = ""
             if self.translation_manager and not is_nontranslatable_identifier:
-                # Cache lookup needs to match the key logic in translation_manager
-                # (Engine, Source, Target, Text) -> Result
-                # We do a 'best effort' check here.
-                # Assuming engine is consistent or we just want *any* translation for this text/mylang.
-                
-                # Direct cache access via manager helper if available, or manual lookup
-                # Since cache keys include engine/source/target, we iterate to find a match for current target/text
-                # This is slightly expensive but worth it for resume UX.
-                
-                # Fast path: Try with current engine settings
                 api_target = RENPY_TO_API_LANG.get(self.target_language, self.target_language)
                 api_source = RENPY_TO_API_LANG.get(self.source_language, self.source_language)
                 
-                # Check for cached result
+                # Fast path: Try with current engine settings
                 cache_key = (self.engine.value, api_source, api_target, text)
                 cached_res = self.translation_manager._cache.get(cache_key)
                 
                 # If not found with exact key, try loose match (any engine, same languages)
                 if not cached_res:
                     for k, v in self.translation_manager._cache.items():
-                        # buffer check: k[2] is target, k[3] is original text
                         if len(k) >= 4 and k[2] == api_target and k[3] == text:
                             cached_res = v
                             break
@@ -2223,13 +2290,32 @@ init python:
             if is_nontranslatable_identifier:
                 cached_translation = escaped_text
 
-            lines.append(f'    old "{escaped_text}"')
-            lines.append(f'    new "{cached_translation}"')
-            lines.append("")
+            entry_lines.append(f'    old "{escaped_text}"')
+            entry_lines.append(f'    new "{cached_translation}"')
+            entry_lines.append("")
+            
+            # Add to main lines
+            lines.extend(entry_lines)
+            entries_added += 1
             
             # Yield GIL periodically to keep UI alive
             if i % 100 == 0:
                 time.sleep(0.001)
+        
+        # v2.7.2 Fix: If NO translatable entries were found, do NOT return a file content.
+        # This prevents "translate strings statement expects a non-empty block" errors in Ren'Py.
+        if entries_added == 0:
+            return None
+            
+        # Add the header and return
+        header = [
+            "# Translation strings file",
+            "# Auto-generated by RenLocalizer",
+            "# Using Ren'Py String Translation format for maximum compatibility",
+            "",
+            f"translate {target_lang} strings:",
+            ""
+        ]
         
         if skipped:
             try:
@@ -2237,7 +2323,7 @@ init python:
             except Exception:
                 pass
 
-        return '\n'.join(lines)
+        return '\n'.join(header + lines)
     
     def _protect_glossary_terms(self, text: str) -> Tuple[str, Dict[str, str]]:
         """Sözlük terimlerini Unicode bracket placeholder ile korur ve karşılıklarını saklar.
@@ -2512,6 +2598,17 @@ init python:
             )
             t.status_callback = self.log_message.emit
             self.translation_manager.add_translator(TranslationEngine.LOCAL_LLM, t)
+
+        if self.engine == TranslationEngine.LIBRETRANSLATE and self.engine not in self.translation_manager.translators:
+            from src.core.translator import LibreTranslateTranslator
+            t = LibreTranslateTranslator(
+                base_url=self.config.translation_settings.libretranslate_url,
+                api_key=self.config.translation_settings.libretranslate_api_key,
+                proxy_manager=getattr(self.translation_manager, "proxy_manager", None),
+                config_manager=self.config
+            )
+            t.status_callback = self.log_message.emit
+            self.translation_manager.add_translator(TranslationEngine.LIBRETRANSLATE, t)
 
         # ================================================================
         # v2.7.1: Auto-protect character names — glossary'ye ekle

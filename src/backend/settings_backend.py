@@ -429,6 +429,74 @@ class SettingsBackend(QObject):
                 loop.close()
         except Exception as e:
             return f"{self.config.get_ui_text('error', 'Hata')}: {str(e)}"
+
+    # ========== LIBRETRANSLATE SETTINGS ==========
+
+    @pyqtSlot(result=list)
+    def getLibreTranslatePresets(self) -> list:
+        """Get available LibreTranslate-compatible server presets."""
+        return [
+            {"name": "LibreTranslate (Local)", "url": "http://localhost:5000"},
+            {"name": "Apertium (Local)", "url": "http://localhost:2737"},
+            {"name": "libretranslate.com", "url": "https://libretranslate.com"},
+            {"name": "Custom", "url": ""}
+        ]
+
+    @pyqtSlot(str, result=str)
+    def applyLibreTranslatePreset(self, name: str) -> str:
+        """Apply selected LibreTranslate preset. Returns the new URL as JSON."""
+        import json
+        presets = self.getLibreTranslatePresets()
+        for p in presets:
+            if p["name"] == name and name != "Custom":
+                self.setLibreTranslateUrl(p["url"])
+                return json.dumps({"url": p["url"]})
+        return json.dumps({"url": ""})
+
+    @pyqtSlot(result=str)
+    def getLibreTranslateUrl(self) -> str:
+        return self.config.translation_settings.libretranslate_url or "http://localhost:5000"
+
+    @pyqtSlot(str)
+    def setLibreTranslateUrl(self, url: str):
+        self.config.translation_settings.libretranslate_url = url.strip()
+        self.config.save_config()
+
+    @pyqtSlot(result=str)
+    def getLibreTranslateApiKey(self) -> str:
+        return self.config.translation_settings.libretranslate_api_key or ""
+
+    @pyqtSlot(str)
+    def setLibreTranslateApiKey(self, key: str):
+        self.config.translation_settings.libretranslate_api_key = key
+        self.config.save_config()
+
+    @pyqtSlot(result=str)
+    def testLibreTranslateConnection(self) -> str:
+        """Test connection to LibreTranslate server."""
+        import asyncio
+        import aiohttp
+        try:
+            url = (self.config.translation_settings.libretranslate_url or "http://localhost:5000").rstrip('/')
+
+            async def _test():
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{url}/languages", timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            lang_count = len(data) if isinstance(data, list) else 0
+                            return True, f"✓ Connected! {lang_count} languages available."
+                        return False, f"HTTP {resp.status}"
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                success, message = loop.run_until_complete(_test())
+                return message
+            finally:
+                loop.close()
+        except Exception as e:
+            return f"{self.config.get_ui_text('error', 'Error')}: {str(e)}"
     
     @pyqtSlot(result=float)
     def getAITemperature(self) -> float:
@@ -525,18 +593,6 @@ class SettingsBackend(QObject):
     def setProxyEnabled(self, enabled: bool):
         self.config.proxy_settings.enabled = enabled
         self.config.save_config()
-        
-        # Show warning when enabling free proxy mode (no personal proxy configured)
-        if enabled:
-            proxy_url = getattr(self.config.proxy_settings, 'proxy_url', '') or ""
-            manual_proxies = getattr(self.config.proxy_settings, 'manual_proxies', [])
-            
-            # Free proxy mode: enabled but no personal/manual proxies
-            if not proxy_url and not manual_proxies:
-                self.showInfo(
-                    self.translator.translate("free_proxy_warning"),
-                    self.translator.translate("proxy_settings")
-                )
     
     @pyqtSlot(result=str)
     def getProxyUrl(self) -> str:
@@ -560,7 +616,7 @@ class SettingsBackend(QObject):
 
     @pyqtSlot()
     def refreshProxies(self):
-        """Refresh proxy list in background."""
+        """Refresh proxy list (test connections) in background."""
         import threading
         threading.Thread(target=self._refresh_proxies_thread, daemon=True).start()
 
@@ -575,19 +631,19 @@ class SettingsBackend(QObject):
             pm.configure_from_settings(self.config.proxy_settings)
 
             async def run_refresh():
-                await pm.initialize()  # Fetches and tests
+                await pm.initialize()  # Tests connections
                 return pm.get_proxy_stats()
 
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
                 stats = loop.run_until_complete(run_refresh())
+                working = stats['working_proxies']
                 personal = stats.get('personal_proxies', 0)
-                msg = self.config.get_ui_text("proxy_refresh_success", "Proxy list updated: {working}/{total} active.").format(
-                    working=stats['working_proxies'], total=stats['total_proxies']
+                
+                msg = self.config.get_ui_text("proxy_test_finished", "Connection test finished: {working} proxies are working.").format(
+                    working=working
                 )
-                if personal > 0:
-                    msg += f" (+ {personal} personal)"
                 self.proxyRefreshFinished.emit(True, msg)
             finally:
                 loop.close()

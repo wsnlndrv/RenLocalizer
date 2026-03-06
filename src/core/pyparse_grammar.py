@@ -222,8 +222,11 @@ def extract_with_pyparsing(content: str, file_path: str = "") -> List[Dict]:
                         continue
                         
                     # Skip internal Ren'Py paths or technical IDs
-                    if text_content.islower() and len(text_content) < 15 and ' ' not in text_content and not text_content.startswith('{'):
-                        continue
+                    if text_content.islower() and len(text_content) < 20 and ' ' not in text_content and not text_content.startswith('{'):
+                         # v2.7.2: Skip common internal states (playing, waiting, etc.)
+                         # Only accept if it has punctuation, spaces, or starts with caps (usually handle above)
+                         if not re.search(r'[^a-zA-Z0-9_]', text_content):
+                              continue
                     
                     # Meaningful alphabetic content check
                     cleaned = re.sub(r'(\[[^\]]+\]|\{[^}]+\}|\\n)', '', text_content).strip()

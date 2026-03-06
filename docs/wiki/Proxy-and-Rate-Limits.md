@@ -1,40 +1,124 @@
-# 🌐 Proxy Management & Rate Limits
+# 🌐 Proxy Management & Rate Limits (2.7.1)
 
-When using free translation services, you will eventually hit "Rate Limits"—temporary bans from the provider for sending too many requests. 
+This page is the canonical place for proxy and rate-limit behavior in RenLocalizer.
 
----
-
-## 🛑 What is an HTTP 429 Error?
-`HTTP 429: Too Many Requests` means your IP has been temporarily flagged. 
-> 🛠️ **Solution:** Wait 10-20 minutes, or use **Proxies**.
+For performance tuning details, also see: [[Performance-Optimization]].
 
 ---
 
-## 🛠️ Using Proxies in RenLocalizer
-1.  **Open Settings:** Go to **Tools > Proxy Settings**.
-2.  **Add List:** Paste your proxies in `IP:PORT` format (one per line).
-3.  **Rotation:** RenLocalizer automatically rotates through your list. If one proxy fails, it immediately tries another.
+## 🛑 What HTTP 429 Means
+`HTTP 429: Too Many Requests` means the source IP is being throttled by Google.
+
+In practice, Google rate-limits by **IP**, not by a single mirror domain.
+So if one mirror returns 429, other mirrors from the same IP may also be affected.
+
+This is why endpoint switching alone may not fully solve heavy throttling windows if the same source IP keeps being reused.
 
 ---
 
-## ⚡ Multi-Endpoint vs. Proxies
-In version 2.4.0+, the "Multi-Endpoint" feature significantly reduces the need for proxies by automatically switching between dozens of Google mirrors. 
-*   **Enable this in Settings** to get the best out-of-the-box experience without a proxy list.
+## ⚡ 2.7.1 Rate-Limit Protection
+
+RenLocalizer now applies a global cooldown and safer pacing to reduce ban cascades:
+
+- **Global cooldown on 429:** escalating backoff (short to longer waits)
+- **Health-aware endpoint selection:** unhealthy mirrors are deprioritized/temporarily banned
+- **Request jitter + pacing:** avoids synchronized bursts
+- **Lower risky parallelism:** helps stability under heavy load
+
+Result: fewer cascade bans and more stable long runs.
+
+### What this means in practice
+
+- Speed becomes more stable over long sessions.
+- Hard fail storms are reduced, but not fully eliminated if IP pressure is high.
+- Some batches may still slow down intentionally due to cooldown logic.
 
 ---
 
-## 💡 Tips to Avoid Bans
-*   **Increase Delay:** Set "Request Delay" to **1.0s - 2.0s**.
-*   **Smaller Batches:** Reduce "Batch Size" to **50-100**.
-*   **VPN:** Use a high-quality system-wide VPN.
-*   **AI Providers:** Engines like **Gemini** and **OpenAI** handle high volume much better when using an API key.
+## 🛠️ Proxy Behavior in 2.7.1
+
+### Priority logic (important)
+
+- If `proxy_url` **or** `manual_proxies` is configured, RenLocalizer uses **only personal/manual proxies**.
+- Free proxy sources are used **only as fallback** when no personal/manual proxy is configured.
+
+This prevents reliable private proxies from being mixed with unstable public pools.
+
+### Why this priority exists
+
+- Mixing private and public proxies in the same rotation often destroys consistency.
+- Public lists can inject many dead/blocked nodes into an otherwise healthy pool.
+- Isolating personal proxies improves predictability and easier troubleshooting.
+
+### Rotation
+
+- With `auto_rotate = true`, proxies rotate automatically.
+- Failed proxies are deprioritized; successful ones get healthier scores.
+
+### Health expectations by proxy type
+
+- **Residential proxies:** best success rate, usually best sustained throughput.
+- **Datacenter proxies:** can be fast but are often pre-flagged on some endpoints.
+- **Public/free proxies:** highly volatile; many are dead, overloaded, or already blocked.
+
+---
+
+## 🧭 How to Configure
+
+1. Open **Settings → Proxy**.
+2. Enable proxy usage.
+3. Choose one mode:
+	- **Personal Proxy URL** (`http://user:pass@host:port`) — recommended
+	- **Manual Proxy List** (`IP:PORT`, one per line)
+	- **No personal proxy** → free-proxy fallback mode
+
+4. Enable auto-rotate if you have multiple usable proxies.
+5. Start with moderate concurrency and observe 429 frequency.
+
+---
+
+## 💡 Practical Recommendations
+
+- For best reliability: use a personal/residential proxy.
+- If using free proxies: expect unstable uptime and variable speed.
+- Keep request delay reasonable when translating very large projects.
+- If you still see repeated 429, pause briefly and resume (or switch proxy pool).
+
+### Important note about free/global proxy pools
+
+RenLocalizer includes a free proxy fallback mode, but real-world quality is limited:
+
+- Finding actually working free proxies is often very hard.
+- Many public endpoints are already burned/blocked.
+- Even "working" entries can die after a short time.
+
+Treat free proxy mode as emergency fallback, not as a high-reliability production setup.
+
+---
+
+## 🧪 Troubleshooting Flow (Quick)
+
+1. Repeated 429 on many mirrors:
+	- Lower concurrency slightly
+	- Increase request delay a bit
+	- Wait for cooldown window
+2. Frequent timeouts / unstable speed:
+	- Check proxy quality first
+	- Remove dead proxies from manual list
+3. Throughput is inconsistent batch-to-batch:
+	- This can be normal under adaptive cooldown
+	- Use better proxy quality for smoother long-run speed
 
 ---
 
 ## 📋 Proxy Quality Guide
-*   ✅ **Residential Proxies:** Best success rate. Hard to detect.
-*   ⚠️ **Datacenter Proxies:** Fast, but often already blocked by Google.
-*   ❌ **Public Proxies:** Found on free websites. Usually slow, insecure, and non-functional.
+
+- ✅ **Residential proxies:** best success rate
+- ⚠️ **Datacenter proxies:** fast but frequently pre-blocked
+- ❌ **Public/free lists:** inconsistent, often already burned
 
 ---
-> 📘 **Related:** See [[Performance-Optimization]] for tuning your speed.
+
+## 🔗 Related
+
+- [[Performance-Optimization]]

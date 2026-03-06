@@ -41,6 +41,7 @@ class TranslationEngine(Enum):
     OPENAI = "openai"
     GEMINI = "gemini"
     LOCAL_LLM = "local_llm"
+    LIBRETRANSLATE = "libretranslate"
     PSEUDO = "pseudo"  # Pseudo-localization for UI testing
 
 
@@ -826,30 +827,65 @@ class GoogleTranslator(BaseTranslator):
     # Detection configuration constants
     DETECT_MIN_TEXT_LENGTH = 30      # Minimum characters for a sample to be valid
     DETECT_SAMPLE_SIZE = 15          # Number of samples to analyze
-    DETECT_CONFIDENCE_THRESHOLD = 0.70  # Minimum 70% agreement required
+    DETECT_CONFIDENCE_THRESHOLD = 0.50  # Lowered because we use dynamic thresholding now
     
+    def _clean_text_for_detection(self, text: str) -> str:
+        """Removes tags, brackets, and syntax noise to leave pure language."""
+        if not text: return ""
+        # Remove typical Ren'Py tags {b}, {color=#fff}, etc.
+        text = re.sub(r'\{[^}]*\}', '', text)
+        # Remove interpolation brackets [player_name], <RLPH..>
+        text = re.sub(r'\[[^]]*\]', '', text)
+        text = re.sub(r'<RLPH\d+>', '', text)
+        # Remove other special characters that aren't language
+        text = re.sub(r'[_\-\*\/\|\\\\]', ' ', text)
+        return text.strip()
+
     async def detect_language(self, texts: List[str], target_lang: str = None) -> Optional[str]:
         """
-        Detects source language from a list of text samples using majority voting.
-        
-        This method analyzes multiple text samples and uses a confidence threshold
-        to ensure reliable detection. If the confidence is below the threshold,
-        it returns None, signaling that 'auto' mode should be used.
-        
-        Args:
-            texts: List of text strings to analyze
-            target_lang: Target language code (to avoid detecting target as source)
-            
-        Returns:
-            ISO 639-1 language code (e.g., 'en', 'fr', 'ru') or None if confidence is low
+        Detects source language from a list of text samples using an advanced
+        aggregation and progressive thresholding strategy.
         """
-        # Filter meaningful texts (long enough for reliable detection)
-        candidates = [t for t in texts if len(t.strip()) >= self.DETECT_MIN_TEXT_LENGTH]
+        # Step 1: Clean texts from syntax noise
+        clean_texts = [self._clean_text_for_detection(t) for t in texts]
+        clean_texts = [t for t in clean_texts if t.strip()] # Remove empty after cleaning
         
-        if not candidates:
-            self.logger.debug("No suitable text samples for language detection")
+        if not clean_texts:
+            self.logger.debug("[Smart Detect] No suitable text left after syntax cleaning")
             return None
+            
+        # Step 2: Extract meaningful texts or use Aggregation
+        candidates = [t for t in clean_texts if len(t) >= self.DETECT_MIN_TEXT_LENGTH]
         
+        if len(candidates) < self.DETECT_SAMPLE_SIZE:
+            # Aggregation Strategy: Concatenate shorter strings to form blocks.
+            short_texts = [t for t in clean_texts if len(t) < self.DETECT_MIN_TEXT_LENGTH]
+            random.shuffle(short_texts)
+            
+            current_block = []
+            current_len = 0
+            
+            for st in short_texts:
+                current_block.append(st)
+                current_len += len(st)
+                
+                # If block reached 40+ chars, treat it as one valid candidate
+                if current_len >= 40:
+                    candidates.append(" . ".join(current_block))
+                    current_block = []
+                    current_len = 0
+                    
+                if len(candidates) >= self.DETECT_SAMPLE_SIZE:
+                    break
+            
+            # Flush remaining if we have absolutely nothing else
+            if current_block and not candidates:
+                candidates.append(" . ".join(current_block))
+
+        if not candidates:
+            self.logger.warning("[Smart Detect] Could not create candidate blocks.")
+            return None
+
         # Take random sample to avoid bias from specific game sections
         sample_size = min(self.DETECT_SAMPLE_SIZE, len(candidates))
         samples = random.sample(candidates, sample_size)
@@ -867,24 +903,35 @@ class GoogleTranslator(BaseTranslator):
             self.logger.warning("[Smart Detect] Could not detect language from any sample")
             return None
         
-        # Majority voting
+        # Step 3: Progressive Threshold Voting
         counter = Counter(detected_langs)
-        winner, count = counter.most_common(1)[0]
-        confidence = count / len(detected_langs)
+        most_common = counter.most_common(2) # Get top 2
         
-        self.logger.info(f"[Smart Detect] Results: {dict(counter)} | Winner: {winner} ({confidence:.0%})")
+        winner_lang, winner_count = most_common[0]
+        runner_up_count = most_common[1][1] if len(most_common) > 1 else 0
+        
+        total_votes = len(detected_langs)
+        winner_confidence = winner_count / total_votes
+        runner_up_confidence = runner_up_count / total_votes
+        
+        self.logger.info(f"[Smart Detect] Results: {dict(counter)} | Top: {winner_lang} ({winner_confidence:.0%})")
         
         # Safety check: detected language should not equal target language
-        if target_lang and winner.lower() == target_lang.lower():
-            self.logger.warning(f"[Smart Detect] Detected language ({winner}) equals target language. Falling back to auto.")
+        if target_lang and winner_lang.lower() == target_lang.lower():
+            self.logger.warning(f"[Smart Detect] Detected language ({winner_lang}) equals target language. Falling back to auto.")
             return None
         
-        # Apply confidence threshold
-        if confidence >= self.DETECT_CONFIDENCE_THRESHOLD:
-            self.logger.info(f"[Smart Detect] ✓ Confirmed source language: {winner}")
-            return winner
+        # Progressive Logic:
+        # If absolute majority (>70%): Accept immediately
+        # If relative majority (>40%) AND beats runner-up by at least 25 points: Accept
+        is_absolute_winner = winner_confidence >= 0.70
+        is_clear_victor = (winner_confidence >= 0.40) and ((winner_confidence - runner_up_confidence) >= 0.25)
+        
+        if is_absolute_winner or is_clear_victor:
+            self.logger.info(f"[Smart Detect] ✓ Confirmed source language: {winner_lang}")
+            return winner_lang
         else:
-            self.logger.warning(f"[Smart Detect] Confidence {confidence:.0%} below threshold {self.DETECT_CONFIDENCE_THRESHOLD:.0%}. Using auto mode.")
+            self.logger.warning(f"[Smart Detect] Results too ambiguous. Using auto mode.")
             return None
     
     async def _detect_single_language(self, text: str) -> Optional[str]:
@@ -1821,6 +1868,138 @@ class DeepLTranslator(BaseTranslator):
             'sv': 'Swedish', 'tr': 'Turkish', 'uk': 'Ukrainian', 'zh': 'Chinese'
         }
 
+class LibreTranslateTranslator(BaseTranslator):
+    """Local or self-hosted LibreTranslate API Translator."""
+
+    def __init__(self, base_url: str = "http://localhost:5000", api_key: str = "", proxy_manager=None, config_manager=None):
+        super().__init__(proxy_manager, config_manager)
+        # Protocol Hardening: Ensure URL starts with http:// or https://
+        clean_url = base_url.strip().rstrip('/')
+        if clean_url and not (clean_url.startswith('http://') or clean_url.startswith('https://')):
+            clean_url = f"http://{clean_url}"
+        
+        self.base_url = clean_url
+        self.api_key = api_key
+        self.logger = logging.getLogger(__name__)
+
+    async def translate_single(self, request: TranslationRequest) -> TranslationResult:
+        results = await self.translate_batch([request])
+        return results[0] if results else TranslationResult(request.text, "", request.source_lang, request.target_lang, TranslationEngine.LIBRETRANSLATE, False, "Batch failed")
+
+    async def translate_batch(self, requests: List[TranslationRequest]) -> List[TranslationResult]:
+        if not requests:
+            return []
+
+        # LibreTranslate expects `q` as a single string or an array of strings
+        # We'll batch them up into one API call
+        texts_to_translate = []
+        all_placeholders = []
+        
+        # Determine languages from the first request (assuming batch is homogeneous)
+        # Handle regional codes (zh-CN, pt-BR) more intelligently
+        def _get_lang_code(raw: str) -> str:
+            raw = raw.lower().strip()
+            if raw == "auto": return "auto"
+            # Return as-is if it contains a hyphen (regional/variant) or is short (ISO 639-1/2/3)
+            # Most modern MT engines use codes like 'zh-CN', 'zh-TW', 'pt-BR', 'fil', 'ber'
+            if '-' in raw or len(raw) <= 3:
+                return raw
+            # Fallback for very long non-hyphenated strings
+            return raw[:2]
+
+        src_lang = _get_lang_code(requests[0].source_lang)
+        tgt_lang = _get_lang_code(requests[0].target_lang)
+
+        for req in requests:
+            meta = req.metadata if isinstance(req.metadata, dict) else {}
+            preprotected = meta.get('preprotected', False)
+            placeholders = meta.get('placeholders')
+
+            if preprotected and isinstance(placeholders, dict):
+                protected_text = req.text
+            else:
+                protected_text, placeholders = protect_renpy_syntax(req.text)
+                
+            texts_to_translate.append(protected_text)
+            all_placeholders.append(placeholders)
+
+        payload = {
+            "q": texts_to_translate,
+            "source": src_lang,
+            "target": tgt_lang,
+            "format": "text"
+        }
+        if self.api_key:
+            payload["api_key"] = self.api_key
+
+        url = f"{self.base_url}/translate"
+        results = []
+
+        try:
+            resp = await self._make_request(url, method="POST", json=payload, headers={"Content-Type": "application/json"})
+            if 'translatedText' in resp:
+                translated_list = resp['translatedText']
+                if isinstance(translated_list, str):
+                     translated_list = [translated_list]
+                     
+                for i, req in enumerate(requests):
+                    if i < len(translated_list):
+                        translated = translated_list[i]
+                        placeholders = all_placeholders[i]
+                        meta = req.metadata if isinstance(req.metadata, dict) else {}
+                        orig_text = meta.get('original_text', req.text)
+
+                        restored = restore_renpy_syntax(translated.strip(), placeholders)
+                        missing = validate_translation_integrity(restored, placeholders)
+
+                        if missing:
+                            injected = inject_missing_placeholders(restored, req.text, placeholders, missing)
+                            if not validate_translation_integrity(injected, placeholders) or restored.strip():
+                                restored = injected
+                                missing = False
+
+                        success = not missing
+                        confidence = 0.9 if success else 0.0
+
+                        results.append(TranslationResult(
+                            original_text=orig_text,
+                            translated_text=restored,
+                            source_lang=req.source_lang,
+                            target_lang=req.target_lang,
+                            engine=TranslationEngine.LIBRETRANSLATE,
+                            success=success,
+                            confidence=confidence,
+                            metadata=req.metadata
+                        ))
+                    else:
+                        results.append(TranslationResult(req.text, "", req.source_lang, req.target_lang, TranslationEngine.LIBRETRANSLATE, False, "Missing translation in response"))
+            else:
+                 error_msg = resp.get("error", "Unknown API Error")
+                 for req in requests:
+                     results.append(TranslationResult(req.text, "", req.source_lang, req.target_lang, TranslationEngine.LIBRETRANSLATE, False, f"API Error: {error_msg}"))
+        except Exception as e:
+            for req in requests:
+                results.append(TranslationResult(req.text, "", req.source_lang, req.target_lang, TranslationEngine.LIBRETRANSLATE, False, f"Connection Error: {e}"))
+
+        return results
+
+    def get_supported_languages(self) -> Dict[str, str]:
+        # Full list matching LibreTranslate's actual language coverage
+        return {
+            'en': 'English', 'ar': 'Arabic', 'az': 'Azerbaijani', 'bg': 'Bulgarian',
+            'bn': 'Bengali', 'ca': 'Catalan', 'cs': 'Czech', 'da': 'Danish',
+            'de': 'German', 'el': 'Greek', 'eo': 'Esperanto', 'es': 'Spanish',
+            'et': 'Estonian', 'fa': 'Persian', 'fi': 'Finnish', 'fr': 'French',
+            'ga': 'Irish', 'he': 'Hebrew', 'hi': 'Hindi', 'hu': 'Hungarian',
+            'id': 'Indonesian', 'it': 'Italian', 'ja': 'Japanese', 'ko': 'Korean',
+            'lt': 'Lithuanian', 'lv': 'Latvian', 'ms': 'Malay', 'nb': 'Norwegian Bokmål',
+            'nl': 'Dutch', 'pl': 'Polish', 'pt': 'Portuguese', 'ro': 'Romanian',
+            'ru': 'Russian', 'sk': 'Slovak', 'sl': 'Slovenian', 'sq': 'Albanian',
+            'sr': 'Serbian', 'sv': 'Swedish', 'th': 'Thai', 'tl': 'Filipino',
+            'tr': 'Turkish', 'uk': 'Ukrainian', 'ur': 'Urdu', 'vi': 'Vietnamese',
+            'zh': 'Chinese',
+        }
+
 class TranslationManager:
     def __init__(self, proxy_manager=None, config_manager=None):
         self.proxy_manager = proxy_manager
@@ -2060,7 +2239,7 @@ class TranslationManager:
             only = [r for _, r in items]
             
             # Batch çeviri desteği kontrolü
-            can_batch = (isinstance(tr, GoogleTranslator) or is_ai or isinstance(tr, DeepLTranslator))
+            can_batch = (isinstance(tr, GoogleTranslator) or is_ai or isinstance(tr, DeepLTranslator) or isinstance(tr, LibreTranslateTranslator))
             
             translated_items: List[TranslationResult] = []
             if can_batch and len(only) > 1:

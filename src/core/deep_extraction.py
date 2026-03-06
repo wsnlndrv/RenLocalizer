@@ -57,6 +57,11 @@ class DeepExtractionConfig:
         "achievement.register": {"pos": [0], "kw": ["stat_name"]},
         # Character proxy / narrator
         "narrator":             {"pos": [0]},
+        # Gallery / Interface (v2.7.2 Enhancement)
+        "gallery.button":       {"pos": [0]},
+        "gallery_gup.button":   {"pos": [0]}, # Specific to Oyun5 but common pattern
+        "unlock_image":         {"pos": [0]},
+        "image":                {"pos": [0], "kw": ["message"]}, # Context-aware in Gallery
     }
 
     # -------------------------------------------------------------------------
@@ -95,7 +100,8 @@ class DeepExtractionConfig:
         "renpy.music.play", "renpy.music.queue", "renpy.music.stop",
         "renpy.sound.play", "renpy.sound.queue", "renpy.sound.stop",
         "renpy.movie_cutscene", "renpy.transition",
-        "renpy.pause",
+        "renpy.pause", "renpy.show_screen", "renpy.hide_screen",
+        "renpy.get_screen", "renpy.get_widget",
     }
 
     # -------------------------------------------------------------------------
@@ -235,6 +241,9 @@ class DeepVariableAnalyzer:
         if not var_name:
             return 0.5
 
+        # v2.7.2: Pre-check case before lowercasing
+        is_all_upper = var_name.isupper()
+        
         score = 0.5
         name_lower = var_name.lower()
 
@@ -288,6 +297,21 @@ class DeepVariableAnalyzer:
             # config and gui can have text, but default to cautious
             if namespace in ("persistent", "style"):
                 score -= 0.3
+
+        # --- Uppercase Constant Refinement (v2.7.2) ---
+        # If it's all uppercase, it's a constant.
+        # Constants are often internal IDs/enums - we start them with a slightly lower bias.
+        if is_all_upper and len(var_name) > 2:
+            # Shift baseline if not already boosted by prefix/suffix
+            if score == 0.5:
+                score = 0.45 
+            
+            # If it passes technical namespace check, give it a small nudge back
+            # but usually it needs a translatable suffix (_TITLE, _NAME) to pass.
+            if namespace not in ("config", "gui", "style", "persistent"):
+                 # Small nudge if it's long - likely a sentence or name
+                 if len(var_name) > 10:
+                     score += 0.1 
 
         # Clamp
         return max(0.0, min(1.0, score))

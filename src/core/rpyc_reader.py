@@ -918,23 +918,6 @@ class RenpyUnpickler(pickle.Unpickler):
     Custom unpickler that redirects Ren'Py classes to our fake implementations.
     """
     
-    def find_class(self, module, name):
-        """
-        Secure class loading: Only allow mapped Fake classes and whitelisted standard types.
-        Prevents arbitrary code execution from malicious pickles.
-        """
-        # 1. Check Ren'Py Class Map
-        if (module, name) in self.CLASS_MAP:
-             return self.CLASS_MAP[(module, name)]
-        
-        # 2. Whitelist for safe standard library types (used in Ren'Py internals)
-        if module in ('builtins', 'collections', 'datetime', 'time', 'functools', 'itertools', 're', 'types', '__builtin__'):
-             return super().find_class(module, name)
-             
-        # 3. Soft Block: Return harmless Generic for unknown classes to prevent crashing but stop RCE
-        # This is safer than executing arbitrary code (e.g. os.system)
-        return FakeGeneric
-    
     # Mapping of Ren'Py class paths to our fake classes
     CLASS_MAP = {
         # Core AST nodes (renpy.ast)
@@ -1026,10 +1009,7 @@ class RenpyUnpickler(pickle.Unpickler):
         ("renpy.sl2.slast", "SLNull"): FakeGeneric,
         ("renpy.sl2.slast", "SLUseTransform"): FakeGeneric,
         
-        # New: Ren'Py 8.x Screen Language
-        ("renpy.sl2.slast", "SLDrag"): FakeSLDrag,
-        ("renpy.sl2.slast", "SLOnEvent"): FakeSLOnEvent,
-        ("renpy.sl2.slast", "SLBar"): FakeSLBar,
+        # Ren'Py 8.x: Case-sensitive variant (lowercase 'b')
         ("renpy.sl2.slast", "SLVbar"): FakeSLBar,
         ("renpy.ast", "EarlyStatement"): FakeGeneric,
         ("renpy.ast", "RPYBlock"): FakeGeneric,
@@ -1249,74 +1229,114 @@ def read_rpyc_file(file_path: Union[str, Path]) -> List[Any]:
     
     header = read_rpyc_header(data)
     
+    # v2.7.2: Obfuscation detection — check for non-standard magic numbers
+    if header.version == 2 and not data.startswith(b"RENPY RPC2"):
+        magic_prefix = data[:10]
+        logger.warning(
+            f"Non-standard RPYC magic number detected in {file_path}: {magic_prefix!r}. "
+            f"This file may be obfuscated or use a custom format."
+        )
+    
     # Get the compressed data
     if header.version == 1:
         compressed = data
     else:
-        if 1 not in header.slots:
-            raise RpycReadError("No data slot found in RPYC v2 file")
+        # v2.7.2: Slot fallback — try slot 1 first, then slot 2 if unavailable
+        slot_id = None
+        for candidate_slot in (1, 2):
+            if candidate_slot in header.slots:
+                slot_id = candidate_slot
+                break
         
-        start, length = header.slots[1]
+        if slot_id is None:
+            raise RpycReadError(
+                f"No data slot found in RPYC v2 file: {file_path}. "
+                f"Available slots: {list(header.slots.keys())}. "
+                f"The file may be obfuscated or corrupted."
+            )
+        
+        start, length = header.slots[slot_id]
         compressed = data[start:start + length]
     
     # Decompress
     try:
         decompressed = zlib.decompress(compressed)
     except zlib.error as e:
-        raise RpycReadError(f"Decompression failed: {e}")
+        # v2.7.2: If v2 decompression fails, try treating the entire file as v1 (raw zlib)
+        if header.version == 2:
+            logger.warning(f"V2 slot decompression failed for {file_path}, retrying as raw zlib (v1 fallback)")
+            try:
+                decompressed = zlib.decompress(data)
+            except zlib.error:
+                raise RpycReadError(
+                    f"Decompression failed: {e}. "
+                    f"The file may be obfuscated or use custom compression."
+                )
+        else:
+            raise RpycReadError(f"Decompression failed: {e}")
     
     # Unpickle using our custom unpickler
+    # v2.7.2: Try multiple encoding strategies for Python 2/3 compatibility
+    unpickle_errors = []
+    for encoding in ('ASCII', 'latin-1', 'bytes'):
+        try:
+            unpickler = RenpyUnpickler(io.BytesIO(decompressed), encoding=encoding)
+            result = unpickler.load()
+
+            # Result is typically (data, stmts) tuple
+            if isinstance(result, tuple) and len(result) >= 2:
+                return result[1]  # Return statements
+
+            return result if isinstance(result, list) else [result]
+
+        except (UnicodeDecodeError, UnicodeError) as e:
+            # Encoding mismatch — try next encoding
+            unpickle_errors.append((encoding, str(e)))
+            continue
+        except Exception as e:
+            # Non-encoding error — collect and break
+            unpickle_errors.append((encoding, str(e)))
+            break
+    
+    # All attempts failed — produce detailed diagnostics
+    tb = traceback.format_exc()
     try:
-        unpickler = RenpyUnpickler(io.BytesIO(decompressed))
-        result = unpickler.load()
+        slot_info = getattr(header, 'slots', None)
+    except Exception:
+        slot_info = None
 
-        # Result is typically (data, stmts) tuple
-        if isinstance(result, tuple) and len(result) >= 2:
-            return result[1]  # Return statements
+    try:
+        snippet = decompressed[:512]
+        snippet_hex = binascii.hexlify(snippet).decode('ascii')
+    except Exception:
+        snippet_hex = repr(decompressed[:200])
 
-        return result if isinstance(result, list) else [result]
+    error_details = "; ".join(f"[{enc}] {err}" for enc, err in unpickle_errors)
+    msg = (
+        f"Unpickle failed for {file_path}.\n"
+        f"Attempted encodings: {error_details}\n"
+        f"Header slots: {slot_info}\n"
+        f"Traceback:\n{tb}\n"
+        f"Decompressed (first 512 bytes, hex): {snippet_hex}"
+    )
 
-    except Exception as e:
-        # Log detailed diagnostics to help identify problematic pickle state
-        tb = traceback.format_exc()
-        # Show header/slot summary when available
+    try:
+        logger.error(msg)
+    except Exception:
+        pass
+
+    try:
+        sys.stderr.write(msg + "\n")
+    except Exception:
         try:
-            slot_info = getattr(header, 'slots', None)
-        except Exception:
-            slot_info = None
-
-        # Provide a hex snippet of the decompressed pickle to aid debugging
-        try:
-            snippet = decompressed[:512]
-            snippet_hex = binascii.hexlify(snippet).decode('ascii')
-        except Exception:
-            snippet_hex = repr(decompressed[:200])
-
-        msg = (
-            f"Unpickle failed for {file_path}: {e}\n"
-            f"Header slots: {slot_info}\n"
-            f"Traceback:\n{tb}\n"
-            f"Decompressed (first 512 bytes, hex): {snippet_hex}"
-        )
-
-        # Log via logger and also write to stderr as a fallback so Tee-Object captures it
-        try:
-            logger.error(msg)
+            sys.stderr.write(msg.encode('utf-8', errors='replace').decode('utf-8', errors='replace') + "\n")
         except Exception:
             pass
 
-        try:
-            # Use errors='replace' to avoid UnicodeEncodeError when console encoding is limited
-            sys.stderr.write(msg + "\n")
-        except Exception:
-            try:
-                sys.stderr.write(msg.encode('utf-8', errors='replace').decode('utf-8', errors='replace') + "\n")
-            except Exception:
-                pass
-
-        raise RpycReadError(
-            f"Unpickle failed: {e}. See application logs for details (traceback and decompressed snippet)."
-        )
+    raise RpycReadError(
+        f"Unpickle failed after trying encodings {[e for e,_ in unpickle_errors]}. "
+        f"See application logs for details."
+    )
 
 
 # ============================================================================

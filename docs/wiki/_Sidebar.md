@@ -5,20 +5,21 @@
 ### 🚀 Getting Started
 *   [[AI-Engines]]
 *   [[LM-Studio-Guide]]
-*   [[Output-Formats]]
+*   [[Interactive-Mode-Guide]]
+*   [[Settings-UI-Reference]]
 *   [[Performance-Optimization]]
 
 ### 🛠️ Advanced Features
-*   [[External-AI-Translation]]
 *   [[Advanced-Parsing]]
 *   [[RPA-Extraction]]
 *   [[Glossary-Management]]
 *   [[Technical-Filtering]]
 *   [[Proxy-and-Rate-Limits]]
+*   [[Web-Google-Translate-Guide]] — **(NEW)** Using free web-based Google Translate
 
 ### 🖥️ Usage & Help
 *   [[CLI-Usage]]
-*   [[Troubleshooting]]
+*   [[FAQ]]
 *   [[Developer-Guide]]
 
 ---

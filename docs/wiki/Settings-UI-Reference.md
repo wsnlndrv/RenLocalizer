@@ -45,7 +45,8 @@ Control how the AI "thinks" and behaves.
 
 ### **Aggressive Retry**
 *   **What it does:** If the AI returns the *exact same text* as the original (refusing to translate), the tool forces a retry with a stricter "You MUST translate this" prompt.
-*   **Use case:** Useful for short words or names that AI sometimes thinks are proper nouns.
+*   **Default:** `Disabled` (v2.6.4+) to maximize batch processing speed.
+*   **Use case:** Enable only if you notice many untranslated lines in the output.
 
 ---
 

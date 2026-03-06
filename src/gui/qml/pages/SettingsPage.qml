@@ -549,10 +549,10 @@ Rectangle {
                     RowLayout {
                         Button {
                             id: proxyRefreshBtn
-                            text: (backend.uiTrigger, backend.getTextWithDefault("refresh_proxies", "Refresh Proxy List"))
+                            text: (backend.uiTrigger, backend.getTextWithDefault("refresh_proxies_btn", "Test Connections"))
                             onClicked: {
                                 enabled = false
-                                proxyStatusLabel.text = (backend.uiTrigger, backend.getTextWithDefault("log_proxy_refreshing", "Refreshing..."))
+                                proxyStatusLabel.text = (backend.uiTrigger, backend.getTextWithDefault("proxy_refreshing", "Testing..."))
                                 proxyStatusLabel.color = "#f39c12" // orange
                                 settingsBackend.refreshProxies()
                             }
@@ -582,6 +582,16 @@ Rectangle {
                 title: "🖥️ " + (backend.uiTrigger, backend.getTextWithDefault("settings_local_llm_title", "Local LLM Settings"))
                 ColumnLayout {
                     Layout.fillWidth: true; spacing: 15
+                    
+                    Label {
+                        text: (backend.uiTrigger, backend.getTextWithDefault("settings_local_llm_desc", "Connect local AI apps (Ollama, LM Studio etc.) for context-aware, highly accurate translations that remember previous lines."))
+                        color: "#999"
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                        font.pixelSize: 13
+                        bottomPadding: 5
+                    }
+
                     RowLayout {
                          Label { text: (backend.uiTrigger, backend.getTextWithDefault("local_llm_preset_label", "Preset:")); color: "#ccc"; Layout.preferredWidth: 100 }
                          ComboBox {
@@ -633,6 +643,69 @@ Rectangle {
                         onClicked: testResultLabel.text = settingsBackend.testLocalLLMConnection()
                     }
                     Label { id: testResultLabel; Layout.fillWidth: true; color: text.includes("Success") ? "#6bcb77" : "#ff6b6b"; wrapMode: Text.Wrap }
+                }
+            }
+
+            // ==================== LIBRETRANSLATE ====================
+            SettingsGroup {
+                title: "🌐 " + (backend.uiTrigger, backend.getTextWithDefault("settings_libretranslate_title", "LibreTranslate (Local / Self-hosted)"))
+                ColumnLayout {
+                    Layout.fillWidth: true; spacing: 15
+
+                    Label {
+                        text: (backend.uiTrigger, backend.getTextWithDefault("settings_libretranslate_desc", "Connect LibreTranslate, Apertium or any compatible local translation server for fully offline, privacy-friendly machine translations."))
+                        color: "#999"
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                        font.pixelSize: 13
+                        bottomPadding: 5
+                    }
+
+                    RowLayout {
+                        Label { text: (backend.uiTrigger, backend.getTextWithDefault("libretranslate_preset_label", "Preset:")); color: "#ccc"; Layout.preferredWidth: 100 }
+                        ComboBox {
+                            Layout.fillWidth: true
+                            model: settingsBackend.getLibreTranslatePresets()
+                            textRole: "name"
+                            onActivated: {
+                                var result = settingsBackend.applyLibreTranslatePreset(currentText)
+                                var data = JSON.parse(result)
+                                libreUrlField.text = data.url
+                            }
+                        }
+                    }
+
+                    TextField {
+                        id: libreUrlField
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 40
+                        text: settingsBackend.getLibreTranslateUrl()
+                        onEditingFinished: settingsBackend.setLibreTranslateUrl(text)
+                        placeholderText: text.length > 0 ? "" : (backend.uiTrigger, backend.getTextWithDefault("libretranslate_url_placeholder", "Server URL (e.g. http://localhost:5000)"))
+                        leftPadding: 12; rightPadding: 12; color: root.mainTextColor
+                        verticalAlignment: TextInput.AlignVCenter
+                        background: Rectangle { radius: 8; color: root.inputBackground; border.color: root.borderColor }
+                        placeholderTextColor: Qt.rgba(root.mainTextColor.r, root.mainTextColor.g, root.mainTextColor.b, 0.45)
+                    }
+                    TextField {
+                        id: libreApiKeyField
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 40
+                        text: settingsBackend.getLibreTranslateApiKey()
+                        onEditingFinished: settingsBackend.setLibreTranslateApiKey(text)
+                        placeholderText: text.length > 0 ? "" : (backend.uiTrigger, backend.getTextWithDefault("libretranslate_api_key_placeholder", "API Key (optional, for managed instances)"))
+                        leftPadding: 12; rightPadding: 12; color: root.mainTextColor
+                        echoMode: TextInput.Password
+                        verticalAlignment: TextInput.AlignVCenter
+                        background: Rectangle { radius: 8; color: root.inputBackground; border.color: root.borderColor }
+                        placeholderTextColor: Qt.rgba(root.mainTextColor.r, root.mainTextColor.g, root.mainTextColor.b, 0.45)
+                    }
+                    Button {
+                        text: "🔌 " + (backend.uiTrigger, backend.getTextWithDefault("test_libretranslate_connection", "Test Connection"))
+                        Layout.fillWidth: true; highlighted: true
+                        onClicked: libreTestResult.text = settingsBackend.testLibreTranslateConnection()
+                    }
+                    Label { id: libreTestResult; Layout.fillWidth: true; color: text.includes("✓") ? "#6bcb77" : "#ff6b6b"; wrapMode: Text.Wrap }
                 }
             }
 

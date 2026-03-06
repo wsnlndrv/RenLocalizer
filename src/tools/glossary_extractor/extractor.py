@@ -39,7 +39,7 @@ class GlossaryExtractor:
         # 1. Scan for character definitions
         for root, _, files in os.walk(game_dir):
             for file in files:
-                if file.endswith('.rpy'):
+                if file.lower().endswith('.rpy'):
                     file_path = os.path.join(root, file)
                     self._scan_file(file_path, character_map, term_counter)
         

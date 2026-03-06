@@ -366,7 +366,18 @@ def restore_renpy_syntax(text: str, placeholders: Dict[str, str]) -> str:
             if not re.fullmatch(r'[A-Z0-9_]+', token_inner):
                 return match.group(0)
             token_key = f'\u27e6{token_inner}\u27e7'
-            return vars_only.get(token_key, match.group(0))
+            
+            if token_key in vars_only:
+                return vars_only[token_key]
+                
+            # Fuzzy match for Google altering the RLPH string + missing/extra hex characters
+            if '_' in token_inner:
+                suffix = '_' + token_inner.split('_')[-1] + '\u27e7'
+                matches = [k for k in vars_only.keys() if k.endswith(suffix)]
+                if len(matches) == 1:
+                    return vars_only[matches[0]]
+                    
+            return match.group(0)
         result = _unicode_token_re.sub(_restore_unicode_token, result)
     
     # AŞAMA 0.1: Bracket-stripped / variant-bracket RLPH token recovery
@@ -383,7 +394,7 @@ def restore_renpy_syntax(text: str, placeholders: Dict[str, str]) -> str:
             # Opsiyonel herhangi bir parantez + RLPH içerik + opsiyonel kapanış
             _rlph_recovery_re = re.compile(
                 r'[\u27e6\[\(\{【「〔〚]?\s*'
-                r'(RLPH[A-F0-9]{6}_[A-Z0-9]+)'
+                r'([A-Z]{3,5}[A-Z0-9]{4,8}_[A-Z0-9]+)'
                 r'\s*[\u27e7\]\)\}】」〕〛]?'
             )
             def _recover_bare_rlph(m):
@@ -392,6 +403,14 @@ def restore_renpy_syntax(text: str, placeholders: Dict[str, str]) -> str:
                 _key = _rlph_inner_map.get(inner)
                 if _key:
                     return vars_only[_key]
+                    
+                # Fuzzy match
+                if '_' in inner:
+                    suffix = '_' + inner.split('_')[-1] + '\u27e7'
+                    matches = [k for k in vars_only.keys() if k.endswith(suffix)]
+                    if len(matches) == 1:
+                        return vars_only[matches[0]]
+                        
                 return m.group(0)
             result = _rlph_recovery_re.sub(_recover_bare_rlph, result)
     
@@ -598,8 +617,18 @@ def _repair_broken_tag_nesting(text: str) -> str:
                         if last_name == tag_name:
                             stack.pop()
                         else:
-                            # MISMATCHED NESTING -> DELETE CLOSING
-                            broken_indices.add(i)
+                            # Mismatched nesting (e.g. {size}{color}{/size})
+                            # Find matching opened tag further down
+                            found_idx = -1
+                            for j in range(len(stack)-1, -1, -1):
+                                if stack[j][1] == tag_name:
+                                    found_idx = j
+                                    break
+                            
+                            if found_idx != -1:
+                                stack = stack[:found_idx] # pop everything above it
+                            else:
+                                broken_indices.add(i) # Tag never opened, so delete closing
             except Exception:
                 continue
                 

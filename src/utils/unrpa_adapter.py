@@ -157,7 +157,11 @@ class UnrpaAdapter:
             self.logger.error(f"Game directory not found: {game_dir}")
             return False
 
-        rpa_files = list(game_dir.glob("**/*.rpa"))
+        # Linux stays case-sensitive, so we should check both .rpa and .RPA
+        rpa_files = list(game_dir.glob("**/*.rpa")) + list(game_dir.glob("**/*.RPA"))
+        # De-duplicate in case of weird file systems
+        rpa_files = list(set(rpa_files))
+        
         self.logger.info(f"Found {len(rpa_files)} RPA files in {game_dir}")
         
         if not rpa_files:

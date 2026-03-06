@@ -22,6 +22,7 @@ Welcome to the official documentation for **RenLocalizer**, the advanced transla
 *   [[Glossary-Management]] — How to enforce specific terminology across your game.
 *   [[Technical-Filtering]] — Protecting placeholders and Ren'Py syntax.
 *   [[Proxy-and-Rate-Limits]] — Managing proxies to bypass API limits.
+*   [[Web-Google-Translate-Guide]] — **(NEW)** Configuration and best practices for free web-based Google Translate.
 
 ### 🖥️ Usage & Support
 *   [[CLI-Usage]] — Using RenLocalizer from the terminal for automation.

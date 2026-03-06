@@ -365,7 +365,7 @@ class HealthChecker:
                 dirs.remove('renpy')
             
             for filename in files:
-                if filename.endswith('.rpy'):
+                if filename.lower().endswith('.rpy'):
                     file_path = os.path.join(root, filename)
                     report.files_scanned += 1
                     
@@ -453,7 +453,7 @@ def run_health_check(path: str, verbose: bool = False) -> HealthReport:
     checker = HealthChecker()
     
     if os.path.isfile(path):
-        if path.endswith('.rpy'):
+        if path.lower().endswith('.rpy'):
             issues = checker.check_file(path)
             report = HealthReport(issues=issues, files_scanned=1)
         else:

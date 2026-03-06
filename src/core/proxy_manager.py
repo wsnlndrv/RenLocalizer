@@ -1,18 +1,14 @@
 """
-Proxy Manager v2.0
+Proxy Manager v2.8.0
 ===================
 
 Manages proxy rotation for translation requests to avoid rate limiting
 and improve reliability.
 
-v2.0 Changes:
-- Personal proxy (proxy_url) support — always preferred over free proxies
-- SOCKS proxy filtering (aiohttp doesn't support SOCKS natively)
-- Smart proxy testing — GeoNode uptime pre-filter, concurrent batch test
-- Auto-refresh with thread-safe scheduling (no asyncio.create_task in sync)
-- Health feedback integration (mark_proxy_failed/success properly tracked)
-- auto_rotate flag respected
-- Proper aiohttp.ClientTimeout usage
+v2.8.0 Changes:
+- Removed free proxy fetching (GeoNode/Scraping) due to unreliability
+- Focus on Personal and Manual proxies provided by the user
+- Simplified update logic and terminology (Testing vs Refreshing)
 """
 
 import asyncio
@@ -66,21 +62,6 @@ class ProxyManager:
     accepts a ProxySettings-like object (from src.utils.config).
     """
 
-    # GeoNode API — primary source (structured JSON with quality data)
-    GEONODE_API = (
-        "https://proxylist.geonode.com/api/proxy-list"
-        "?protocols=http%2Chttps"
-        "&limit=500&page=1"
-        "&sort_by=lastChecked&sort_type=desc"
-    )
-
-    # Fallback text sources (HTTP only, no quality metadata)
-    TEXT_SOURCES = [
-        "https://api.proxyscrape.com/v2/?request=get&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all&format=textplain",
-        "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-        "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
-    ]
-
     # Test URLs for proxy validation (HTTP — no TLS overhead)
     TEST_URLS = [
         "http://httpbin.org/ip",
@@ -88,12 +69,6 @@ class ProxyManager:
         "http://icanhazip.com",
         "http://checkip.amazonaws.com",
     ]
-
-    # GeoNode minimum uptime filter — skip proxies with <40% uptime
-    GEONODE_MIN_UPTIME = 40.0
-
-    # Maximum proxies to test from free sources (avoid 5-minute waits)
-    MAX_PROXIES_TO_TEST = 150
 
     # Batch test concurrency
     TEST_BATCH_SIZE = 30
@@ -125,11 +100,7 @@ class ProxyManager:
     # ------------------------------------------------------------------
 
     def configure_from_settings(self, proxy_settings) -> None:
-        """Configure manager behaviour from a ProxySettings-like object.
-
-        This keeps core decoupled from ConfigManager while still allowing
-        runtime tuning from the settings dialog.
-        """
+        """Configure manager behaviour from a ProxySettings-like object."""
         try:
             if proxy_settings is None:
                 return
@@ -153,87 +124,6 @@ class ProxyManager:
                 self.custom_proxy_strings = [str(x).strip() for x in manual if str(x).strip()]
         except Exception as e:
             self.logger.warning(f"Error configuring ProxyManager from settings: {e}")
-
-    # ------------------------------------------------------------------
-    # Proxy Fetching
-    # ------------------------------------------------------------------
-
-    async def fetch_proxies_from_geonode(self) -> List[ProxyInfo]:
-        """Fetch proxies from GeoNode API.
-
-        Filters:
-        - HTTP/HTTPS only (aiohttp doesn't support SOCKS natively)
-        - Minimum uptime threshold
-        """
-        try:
-            timeout = aiohttp.ClientTimeout(total=30)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(self.GEONODE_API) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        proxies = []
-
-                        for proxy_data in data.get("data", []):
-                            try:
-                                protocols = proxy_data.get("protocols", [])
-                                # Filter: only HTTP/HTTPS (aiohttp can't use SOCKS)
-                                http_protocols = [p for p in protocols if p.lower() in ("http", "https")]
-                                if not http_protocols:
-                                    continue
-
-                                uptime = float(proxy_data.get("upTime", 0) or 0)
-                                if uptime < self.GEONODE_MIN_UPTIME:
-                                    continue
-
-                                proxy = ProxyInfo(
-                                    host=proxy_data["ip"],
-                                    port=int(proxy_data["port"]),
-                                    protocol=http_protocols[0],
-                                    country=proxy_data.get("country", ""),
-                                    uptime=uptime,
-                                )
-                                proxies.append(proxy)
-                            except (KeyError, ValueError, TypeError) as e:
-                                self.logger.debug(f"Error parsing proxy data: {e}")
-                                continue
-
-                        self.logger.info(f"Fetched {len(proxies)} HTTP proxies from GeoNode (filtered from {len(data.get('data', []))} total)")
-                        return proxies
-
-        except Exception as e:
-            self.logger.error(f"Error fetching proxies from GeoNode: {e}")
-
-        return []
-
-    async def fetch_proxies_from_text_source(self, url: str) -> List[ProxyInfo]:
-        """Fetch proxies from text-based sources (host:port per line)."""
-        try:
-            timeout = aiohttp.ClientTimeout(total=20)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        text = await response.text()
-                        proxies = []
-
-                        for line in text.strip().split("\n"):
-                            line = line.strip()
-                            if ":" in line:
-                                try:
-                                    host, port = line.split(":", 1)
-                                    host = host.strip()
-                                    port_int = int(port.strip())
-                                    if host and 1 <= port_int <= 65535:
-                                        proxies.append(ProxyInfo(host=host, port=port_int, protocol="http"))
-                                except (ValueError, TypeError):
-                                    continue
-
-                        self.logger.info(f"Fetched {len(proxies)} proxies from text source")
-                        return proxies
-
-        except Exception as e:
-            self.logger.error(f"Error fetching proxies from {url}: {e}")
-
-        return []
 
     # ------------------------------------------------------------------
     # Proxy Testing
@@ -323,27 +213,24 @@ class ProxyManager:
     # ------------------------------------------------------------------
 
     async def update_proxy_list(self) -> None:
-        """Update the proxy list from all sources.
+        """Update the proxy list from private sources.
 
-        Priority logic (v2.1.0):
-        1. Personal proxy (proxy_url) — always first, never auto-disabled
-        2. Manual proxies (manual_proxies list) — tested like free ones
-        3. Free proxies (GeoNode + text sources) — ONLY if NO personal/manual proxies
+        Priority logic (v2.8.0):
+        1. Personal proxy (proxy_url) — Highest priority, kept even if test fails
+        2. Manual proxies (manual_proxies list) — Tested and used if working
 
-        Rationale: If user configures their own proxies, they don't want
-        unreliable free proxies mixing in. Free proxies are fallback only.
+        Note: Free proxies (GeoNode/Scraping) have been removed due to poor reliability.
         """
-        self.logger.info("Updating proxy list...")
+        self.logger.info("Updating private proxy list...")
 
         personal_proxies: List[ProxyInfo] = []
-        all_proxies: List[ProxyInfo] = []
+        manual_proxies: List[ProxyInfo] = []
 
         # ── 1. Personal proxy (highest priority) ──
         if self.personal_proxy_url:
             proxy = self._parse_proxy_string(self.personal_proxy_url)
             if proxy:
                 proxy.is_personal = True
-                proxy.is_working = True
                 personal_proxies.append(proxy)
                 self.logger.info(f"Personal proxy loaded: {proxy.host}:{proxy.port}")
 
@@ -352,74 +239,44 @@ class ProxyManager:
             self.logger.info(f"Loading {len(self.custom_proxy_strings)} custom proxies from settings")
             for entry in self.custom_proxy_strings:
                 proxy = self._parse_proxy_string(entry)
-                if proxy:
-                    all_proxies.append(proxy)
+                if proxy and proxy.url not in [p.url for p in personal_proxies]:
+                    manual_proxies.append(proxy)
 
-        # ── 3. Free proxies — ONLY if NO personal/manual proxies configured ──
-        has_personal_proxies = bool(personal_proxies or all_proxies)
-        if not has_personal_proxies:
-            self.logger.info("No personal/manual proxies configured, fetching free proxies...")
-            # GeoNode API (HTTP-only, uptime-filtered)
-            geonode_proxies = await self.fetch_proxies_from_geonode()
-            all_proxies.extend(geonode_proxies)
-
-            # Text sources
-            for url in self.TEXT_SOURCES:
-                text_proxies = await self.fetch_proxies_from_text_source(url)
-                all_proxies.extend(text_proxies)
-        else:
-            self.logger.info(f"Using personal/manual proxies only ({len(personal_proxies) + len(all_proxies)} total), skipping free proxy fetch")
-
-        # ── Deduplicate ──
-        unique_proxies: Dict[str, ProxyInfo] = {}
-        for proxy in all_proxies:
-            key = f"{proxy.host}:{proxy.port}"
-            if key not in unique_proxies:
-                unique_proxies[key] = proxy
-
-        self.logger.info(f"Found {len(unique_proxies)} unique free proxies, {len(personal_proxies)} personal")
+        all_candidates = personal_proxies + manual_proxies
+        if not all_candidates:
+            self.proxies = []
+            self.last_proxy_update = time.time()
+            self.logger.info("No proxies configured.")
+            return
 
         # ── Test proxies ──
-        # Sort by uptime (GeoNode data) so best candidates are tested first
-        candidates = sorted(unique_proxies.values(), key=lambda p: p.uptime, reverse=True)
-        # Limit test count to avoid extremely long waits
-        candidates = candidates[: self.MAX_PROXIES_TO_TEST]
-
         working_proxies: List[ProxyInfo] = []
 
-        # Test personal proxy first (longer timeout)
-        for proxy in personal_proxies:
-            result = await self.test_proxy(proxy, timeout=10)
-            if result:
-                working_proxies.append(proxy)
-                self.logger.info(f"Personal proxy working: {proxy.url} ({proxy.response_time:.1f}s)")
-            else:
-                # Still keep personal proxy — user explicitly set it
-                proxy.is_working = False
-                working_proxies.append(proxy)
-                self.logger.warning(f"Personal proxy FAILED test but kept (user-configured): {proxy.url}")
-
-        # Test free proxies in batches
-        for i in range(0, len(candidates), self.TEST_BATCH_SIZE):
-            batch = candidates[i: i + self.TEST_BATCH_SIZE]
-            tasks = [self.test_proxy(proxy) for proxy in batch]
+        # Test in batches
+        for i in range(0, len(all_candidates), self.TEST_BATCH_SIZE):
+            batch = all_candidates[i: i + self.TEST_BATCH_SIZE]
+            tasks = [self.test_proxy(proxy, timeout=10 if proxy.is_personal else 5) for proxy in batch]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for proxy, result in zip(batch, results):
                 if result is True:
                     working_proxies.append(proxy)
+                elif proxy.is_personal:
+                    # Still keep personal proxy even if test fails — user explicitly set it
+                    proxy.is_working = False
+                    working_proxies.append(proxy)
+                    self.logger.warning(f"Personal proxy FAILED test but kept: {proxy.url}")
 
-        # Sort: personal first, then free by response time
+        # Sort: personal first, then manual ones by response time
         personal = [p for p in working_proxies if p.is_personal]
-        free = [p for p in working_proxies if not p.is_personal]
-        free.sort(key=lambda p: (p.response_time if p.response_time > 0 else 999))
+        manual = [p for p in working_proxies if not p.is_personal]
+        manual.sort(key=lambda p: (p.response_time if p.response_time > 0 else 999))
 
-        self.proxies = personal + free
+        self.proxies = personal + manual
         self.last_proxy_update = time.time()
 
-        free_working = len([p for p in free if p.is_working])
         self.logger.info(
-            f"Updated proxy list: {len(personal)} personal + {free_working} free working proxies"
+            f"Updated proxy list: {len(self.proxies)} active proxies ({len(personal)} personal)."
         )
 
     # ------------------------------------------------------------------

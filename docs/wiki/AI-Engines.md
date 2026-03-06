@@ -23,7 +23,19 @@ Run models locally on your hardware. **No cost, 100% privacy.**
     *   Ollama: `http://localhost:11434/v1`
     *   LM Studio: `http://localhost:1234/v1`
 
+## 🔹 🔴 DeepSeek (New in v2.6.4)
+State-of-the-art reasoning model, excellent for complex syntax.
+*   **Setup:** Select the `DeepSeek` provider in Settings.
+*   **API Key:** Get it from [platform.deepseek.com](https://platform.deepseek.com).
+*   **Why use it?** DeepSeek follows XML tag instructions (`<ph id="0">`) with near-perfect accuracy, making it ideal for code-heavy games.
+
 ---
+
+## 🛠️ How RenLocalizer Protects Your Code (XML)
+In v2.6.4+, RenLocalizer wraps all variables and placeholders in XML tags before sending them to the AI.
+*   **Original:** `Hello [player_name], you obtained {b}Sword{/b}.`
+*   **Sent to AI:** `Hello <ph id="0">[player_name]</ph>, you obtained <ph id="1">{b}</ph>Sword<ph id="2">{/b}</ph>.`
+*   **Benefit:** The AI understands that anything inside `<ph>` tags is **sacred code** and must not be translated. This drastically reduces syntax errors.
 
 ## ⚙️ Advanced AI Parameters
 

@@ -1553,12 +1553,16 @@ class ASTTextExtractor:
         # Common file extensions
         # Fast suffix check
         if '.' in text_strip and text_len > 4:
-            if text_lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp3', '.ogg', 
-                                    '.wav', '.ttf', '.otf', '.rpy', '.rpyc', '.json')):
+            if text_lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico',
+                                    '.mp3', '.ogg', '.wav', '.flac', '.aac', '.m4a',
+                                    '.mp4', '.webm', '.avi', '.mkv', '.mov',
+                                    '.ttf', '.otf', '.rpy', '.rpyc', '.json')):
                 return True
 
-        # Path prefixes
-        if text_strip.startswith(('images/', 'audio/', 'gui/', 'fonts/')):
+        # Path prefixes (case-insensitive for Linux)
+        if text_lower.startswith(('images/', 'audio/', 'gui/', 'fonts/', 'music/', 'sounds/',
+                                   'video/', 'videos/', 'screens/', 'script/', 'game/', 'tl/',
+                                   'backgrounds/', 'sfx/', 'bgm/', 'cg/', 'bg/', 'movies/', 'sound/')):
             return True
 
         # Color codes (Hex)

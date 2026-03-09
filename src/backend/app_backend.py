@@ -38,7 +38,7 @@ from src.core.proxy_manager import ProxyManager
 from src.core.translation_pipeline import TranslationPipeline, PipelineWorker
 
 if TYPE_CHECKING:
-    from src.core.ai_translator import OpenAITranslator, GeminiTranslator, LocalLLMTranslator, DeepSeekTranslator
+    from src.core.ai_translator import OpenAITranslator, GeminiTranslator, LocalLLMTranslator
 from src.utils.data_transfer import export_glossary_to_file, import_glossary_from_file
 
 
@@ -194,6 +194,16 @@ class AppBackend(QObject):
             config_manager=self.config
         )
         self.translation_manager.add_translator(TranslationEngine.LIBRETRANSLATE, lt_translator)
+
+        # 8. Yandex Translate (Free, Widget API)
+        from src.core.translator import YandexTranslator
+        yandex_translator = YandexTranslator(
+            proxy_manager=self.proxy_manager,
+            config_manager=self.config
+        )
+        # Attach Google as fallback for Yandex
+        yandex_translator.set_fallback_translator(google_translator)
+        self.translation_manager.add_translator(TranslationEngine.YANDEX, yandex_translator)
     
     @pyqtSlot()
     def refreshUI(self):
@@ -261,6 +271,7 @@ class AppBackend(QObject):
 
             {"code": "local_llm", "name": self.config.get_ui_text("translation_engines.local_llm", "🖥️ Local LLM")},
             {"code": "libretranslate", "name": self.config.get_ui_text("translation_engines.libretranslate", "🌐 LibreTranslate (Local)")},
+            {"code": "yandex", "name": self.config.get_ui_text("translation_engines.yandex", "🔵 Yandex Translate (Free)")},
         ]
         
         # Pseudo motorunu debug modunda göster
@@ -964,6 +975,7 @@ class AppBackend(QObject):
             "gemini": TranslationEngine.GEMINI,
             "local_llm": TranslationEngine.LOCAL_LLM,
             "libretranslate": TranslationEngine.LIBRETRANSLATE,
+            "yandex": TranslationEngine.YANDEX,
             "pseudo": TranslationEngine.PSEUDO,
         }
         return mapping.get(engine_str, TranslationEngine.GOOGLE)
@@ -1572,3 +1584,143 @@ class AppBackend(QObject):
 
         threading.Thread(target=_run, daemon=True).start()
 
+    # ==================== EXTERNAL TM (v2.7.3) ====================
+
+    @pyqtSlot(str, str, str)
+    def importExternalTM(self, tl_path: str, source_name: str, language: str):
+        """Harici tl/ klasöründen TM import et."""
+        if self._is_busy:
+            self.warningMessage.emit(
+                self.config.get_ui_text("warning", "Warning"),
+                self.config.get_ui_text("app_busy", "Another operation is in progress...")
+            )
+            return
+
+        # Normalize path
+        if tl_path.startswith("file:///"):
+            tl_path = tl_path[8:] if sys.platform == "win32" else tl_path[7:]
+        tl_path = tl_path.replace("/", os.sep)
+
+        if not source_name.strip():
+            source_name = os.path.basename(os.path.dirname(tl_path)) or "Unknown"
+
+        self.logMessage.emit("info", self.config.get_ui_text(
+            "tm_import_started", "Importing Translation Memory from: {path}..."
+        ).replace("{path}", tl_path))
+        self._set_busy(True)
+        threading.Thread(
+            target=self._run_tm_import_thread,
+            args=(tl_path, source_name, language),
+            daemon=True
+        ).start()
+
+    def _run_tm_import_thread(self, tl_path: str, source_name: str, language: str):
+        try:
+            from src.tools.external_tm import ExternalTMStore
+            store = ExternalTMStore()
+            result = store.import_from_tl_directory(
+                tl_lang_dir=tl_path,
+                source_name=source_name,
+                language=language,
+                progress_callback=lambda c, t, m: self.logMessage.emit("debug", m)
+            )
+
+            if result.success:
+                self.logMessage.emit("success", self.config.get_ui_text(
+                    "tm_import_success",
+                    "TM imported successfully: {count} entries from '{name}'"
+                ).replace("{count}", str(result.imported)).replace("{name}", source_name))
+
+                details = []
+                if result.skipped_empty > 0:
+                    details.append(f"empty: {result.skipped_empty}")
+                if result.skipped_same > 0:
+                    details.append(f"same: {result.skipped_same}")
+                if result.skipped_technical > 0:
+                    details.append(f"technical: {result.skipped_technical}")
+                if result.skipped_short > 0:
+                    details.append(f"short: {result.skipped_short}")
+                if result.skipped_duplicate > 0:
+                    details.append(f"duplicate: {result.skipped_duplicate}")
+                if details:
+                    self.logMessage.emit("info", f"[TM] Skipped: {', '.join(details)}")
+            else:
+                self.logMessage.emit("error", self.config.get_ui_text(
+                    "tm_import_failed", "TM import failed: {error}"
+                ).replace("{error}", result.error))
+        except Exception as e:
+            self.logMessage.emit("error", f"TM import error: {e}")
+        finally:
+            self._set_busy(False)
+
+    @pyqtSlot(result=list)
+    def getAvailableTMSources(self) -> list:
+        """tm/ klasöründeki mevcut TM kaynaklarını listele."""
+        try:
+            from src.tools.external_tm import ExternalTMStore
+            store = ExternalTMStore()
+            sources = store.list_available_sources()
+            return [s.to_dict() for s in sources]
+        except Exception as e:
+            self.logger.warning(f"TM list error: {e}")
+            return []
+
+    @pyqtSlot(str, result=bool)
+    def deleteTMSource(self, file_path: str) -> bool:
+        """Bir TM kaynağını sil."""
+        try:
+            from src.tools.external_tm import ExternalTMStore
+            store = ExternalTMStore()
+            success = store.delete_source(file_path)
+            if success:
+                self.logMessage.emit("info", self.config.get_ui_text(
+                    "tm_source_deleted", "TM source deleted."
+                ))
+            return success
+        except Exception as e:
+            self.logMessage.emit("error", f"TM delete error: {e}")
+            return False
+
+    @pyqtSlot(result=bool)
+    def getUseExternalTM(self) -> bool:
+        """External TM aktif mi?"""
+        return getattr(self.config.translation_settings, 'use_external_tm', False)
+
+    @pyqtSlot(bool)
+    def setUseExternalTM(self, enabled: bool):
+        """External TM aç/kapa."""
+        self.config.translation_settings.use_external_tm = enabled
+        self.config.save_config()
+        self.refreshUI()  # HomePage TM kartının görünürlüğünü güncelle
+
+    @pyqtSlot(result=str)
+    def getExternalTMSources(self) -> str:
+        """Aktif TM kaynak yollarını JSON string olarak döndür."""
+        return getattr(self.config.translation_settings, 'external_tm_sources', '[]')
+
+    @pyqtSlot(str)
+    def setExternalTMSources(self, sources_json: str):
+        """Aktif TM kaynak yollarını ayarla."""
+        self.config.translation_settings.external_tm_sources = sources_json
+        self.config.save_config()
+
+    @pyqtSlot(str, bool)
+    def toggleTMSource(self, file_path: str, enabled: bool):
+        """Tek bir TM kaynağını aktif/pasif yap."""
+        import json as _json
+        try:
+            current = _json.loads(
+                getattr(self.config.translation_settings, 'external_tm_sources', '[]')
+            )
+            if not isinstance(current, list):
+                current = []
+
+            if enabled and file_path not in current:
+                current.append(file_path)
+            elif not enabled and file_path in current:
+                current.remove(file_path)
+
+            self.config.translation_settings.external_tm_sources = _json.dumps(current)
+            self.config.save_config()
+        except Exception as e:
+            self.logger.warning(f"TM toggle error: {e}")

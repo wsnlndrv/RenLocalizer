@@ -461,6 +461,77 @@ Rectangle {
                 }
             }
 
+            // ==================== External TM Kaynak Seçimi (v2.7.3) ====================
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: tmColumn.height + 40
+                radius: 16
+                color: root.cardBackground
+                visible: (backend.uiTrigger, backend.getUseExternalTM())
+
+                ColumnLayout {
+                    id: tmColumn
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 20
+                    spacing: 12
+
+                    Label {
+                        text: "🧠 " + (backend.uiTrigger, backend.getTextWithDefault("tm_sources_title", "Translation Memory Sources"))
+                        font.pixelSize: 16
+                        font.bold: true
+                        color: root.mainTextColor
+                    }
+
+                    Label {
+                        text: (backend.uiTrigger, backend.getTextWithDefault("tm_sources_desc", "Select which TM sources to use during translation. Matched texts will skip API calls."))
+                        color: root.secondaryTextColor
+                        font.pixelSize: 12
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
+
+                    Repeater {
+                        id: tmHomeRepeater
+                        model: (backend.uiTrigger, backend.getUseExternalTM()) ? backend.getAvailableTMSources() : []
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+
+                            CheckBox {
+                                id: tmSourceCheck
+                                text: modelData.name + " (" + modelData.language + ") — " + modelData.entry_count + " entries"
+                                checked: {
+                                    try {
+                                        var sources = JSON.parse(backend.getExternalTMSources())
+                                        return sources.indexOf(modelData.file_path) >= 0
+                                    } catch(e) { return false }
+                                }
+                                onToggled: backend.toggleTMSource(modelData.file_path, checked)
+
+                                contentItem: Label {
+                                    text: parent.text
+                                    color: root.secondaryTextColor
+                                    font.pixelSize: 13
+                                    leftPadding: parent.indicator.width + parent.spacing
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                        }
+                    }
+
+                    Label {
+                        visible: tmHomeRepeater.count === 0
+                        text: (backend.uiTrigger, backend.getTextWithDefault("tm_no_sources", "No TM sources available. Import from Tools page."))
+                        color: root.secondaryTextColor
+                        font.pixelSize: 12
+                        font.italic: true
+                    }
+                }
+            }
+
             // ==================== İlerleme Kartı ====================
             Rectangle {
                 Layout.fillWidth: true

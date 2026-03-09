@@ -172,19 +172,19 @@ class RenPyOutputFormatter:
         r'^\s*(?:not\s+)?[A-Za-z_][\w.]*(?:\([^)]*\))?'
         r'\s+(?:not\s+)?in\s+[A-Za-z_][\w.]*'
     )
-    # v2.7.4: Dotted path IN list — GAME.hour in [18,19], GAME.getStarSys().ID in ['X']
+    # v2.7.3: Dotted path IN list — GAME.hour in [18,19], GAME.getStarSys().ID in ['X']
     _DOTTED_IN_RE = re.compile(
         r'^\s*[A-Za-z_][\w.]*(?:\([^)]*\))?(?:\.[A-Za-z_]\w*)*\s+(?:not\s+)?in\s+\['
     )
-    # v2.7.4: Dotted path + comparison/modulo — GAME.day%5 == 0, GAME.hour < 18
+    # v2.7.3: Dotted path + comparison/modulo — GAME.day%5 == 0, GAME.hour < 18
     _DOTTED_COMPARE_RE = re.compile(
         r'^\s*[A-Za-z_][\w.]*(?:\([^)]*\))?(?:\.[A-Za-z_]\w*)*[%\s]*(?:==|!=|>=|<=|<|>)'
     )
-    # v2.7.4: List comprehension — [x >= 70 for x in items]
+    # v2.7.3: List comprehension — [x >= 70 for x in items]
     _LIST_COMPREHENSION_RE = re.compile(
         r'\[.*\bfor\s+\w+\s+in\b.*\]'
     )
-    # v2.7.4: Method call on bracket/paren result — ].count(True), ).items()
+    # v2.7.3: Method call on bracket/paren result — ].count(True), ).items()
     _BRACKET_METHOD_RE = re.compile(
         r'[\]\)]\s*\.\w+\s*\('
     )
@@ -400,9 +400,11 @@ class RenPyOutputFormatter:
         if any(text_lower.endswith(ext) for ext in self.SKIP_FILE_EXTENSIONS):
             return True
         
-        # Skip paths starting with common folder names
-        if text_strip.startswith(('fonts/', 'images/', 'audio/', 'music/', 'sounds/', 
-                                   'gui/', 'screens/', 'script/', 'game/', 'tl/')):
+        # Skip paths starting with common folder names (case-insensitive for Linux)
+        if text_lower.startswith(('fonts/', 'images/', 'audio/', 'music/', 'sounds/', 
+                                   'gui/', 'screens/', 'script/', 'game/', 'tl/',
+                                   'video/', 'videos/', 'backgrounds/', 'sfx/', 'bgm/',
+                                   'cg/', 'bg/', 'movies/', 'sound/')):
             return True
         
         # Skip paths with slashes (file paths like "fonts/something.otf")
@@ -432,7 +434,7 @@ class RenPyOutputFormatter:
         if text_strip in self.RENPY_TECHNICAL_TERMS:
             return True
         
-        # v2.7.4: Python builtin constants as standalone text
+        # v2.7.3: Python builtin constants as standalone text
         # "True", "False", "None" are NEVER translatable — they are Python keywords
         if text_strip in ('True', 'False', 'None'):
             return True
@@ -541,7 +543,7 @@ class RenPyOutputFormatter:
         
         # Broader code detection: dotted access + comparison/boolean in same string
         # e.g., "GAME.hour < 18 and GAME.questSys.isDone('QID_...')"
-        # v2.7.4: Lowered threshold to 1 dotted ref (was 2) when operators present
+        # v2.7.3: Lowered threshold to 1 dotted ref (was 2) when operators present
         # NOTE: Require 3+ chars before dot to avoid abbreviations (e.g., U.S., Dr.)
         dot_refs = re.findall(r'[A-Za-z_]\w{2,}\.\w+', text_strip)
         if len(dot_refs) >= 1 and re.search(r'\b(?:and|or|not)\b|[<>=!]=|(?<![<>])[<>](?![<>])', text_strip):

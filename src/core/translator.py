@@ -23,8 +23,6 @@ from .syntax_guard import (
     inject_missing_placeholders,
     protect_renpy_syntax_html,
     restore_renpy_syntax_html,
-    RENPY_VAR_PATTERN,
-    RENPY_TAG_PATTERN
 )
 
 from src.core.constants import (
@@ -32,7 +30,10 @@ from src.core.constants import (
     LINGVA_INSTANCES,
     USER_AGENTS,
     MIRROR_MAX_FAILURES,
-    MIRROR_BAN_TIME
+    MIRROR_BAN_TIME,
+    YANDEX_TRANSLATE_API_URL,
+    YANDEX_WIDGET_JS_URL,
+    YANDEX_SID_LIFETIME,
 )
 
 class TranslationEngine(Enum):
@@ -42,6 +43,7 @@ class TranslationEngine(Enum):
     GEMINI = "gemini"
     LOCAL_LLM = "local_llm"
     LIBRETRANSLATE = "libretranslate"
+    YANDEX = "yandex"
     PSEUDO = "pseudo"  # Pseudo-localization for UI testing
 
 
@@ -1869,7 +1871,10 @@ class DeepLTranslator(BaseTranslator):
         }
 
 class LibreTranslateTranslator(BaseTranslator):
-    """Local or self-hosted LibreTranslate API Translator."""
+    """Local or public LibreTranslate API Translator with failover and rate-limit handling."""
+
+    MAX_RETRIES = 3
+    RETRY_DELAYS = [2.0, 4.0, 8.0]
 
     def __init__(self, base_url: str = "http://localhost:5000", api_key: str = "", proxy_manager=None, config_manager=None):
         super().__init__(proxy_manager, config_manager)
@@ -1881,6 +1886,9 @@ class LibreTranslateTranslator(BaseTranslator):
         self.base_url = clean_url
         self.api_key = api_key
         self.logger = logging.getLogger(__name__)
+        
+        # Check if using local offline instance or public API
+        self.is_local = "localhost" in self.base_url or "127.0.0.1" in self.base_url
 
     async def translate_single(self, request: TranslationRequest) -> TranslationResult:
         results = await self.translate_batch([request])
@@ -1934,54 +1942,114 @@ class LibreTranslateTranslator(BaseTranslator):
 
         url = f"{self.base_url}/translate"
         results = []
+        last_error = None
 
-        try:
-            resp = await self._make_request(url, method="POST", json=payload, headers={"Content-Type": "application/json"})
-            if 'translatedText' in resp:
-                translated_list = resp['translatedText']
-                if isinstance(translated_list, str):
-                     translated_list = [translated_list]
-                     
-                for i, req in enumerate(requests):
-                    if i < len(translated_list):
-                        translated = translated_list[i]
-                        placeholders = all_placeholders[i]
-                        meta = req.metadata if isinstance(req.metadata, dict) else {}
-                        orig_text = meta.get('original_text', req.text)
+        # Try multiple times to prevent ban/rate-limit interruptions
+        import random
+        from src.core.constants import USER_AGENTS
 
-                        restored = restore_renpy_syntax(translated.strip(), placeholders)
-                        missing = validate_translation_integrity(restored, placeholders)
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                session = await self._get_session()
+                # Do not route local connections through proxies
+                proxy = None
+                if self.use_proxy and self.proxy_manager and not self.is_local:
+                    p = self.proxy_manager.get_next_proxy()
+                    if p:
+                        proxy = p.url
 
-                        if missing:
-                            injected = inject_missing_placeholders(restored, req.text, placeholders, missing)
-                            if not validate_translation_integrity(injected, placeholders) or restored.strip():
-                                restored = injected
-                                missing = False
+                headers = {
+                    "Content-Type": "application/json",
+                    "User-Agent": random.choice(USER_AGENTS) if not self.is_local else "RenLocalizer/2.0"
+                }
 
-                        success = not missing
-                        confidence = 0.9 if success else 0.0
+                async with session.post(url, json=payload, headers=headers, proxy=proxy, timeout=aiohttp.ClientTimeout(total=45)) as resp:
+                    if resp.status != 200:
+                        try:
+                            err_data = await resp.json()
+                            msg = err_data.get('error', f"HTTP {resp.status}")
+                        except Exception:
+                            msg = await resp.text()
 
-                        results.append(TranslationResult(
-                            original_text=orig_text,
-                            translated_text=restored,
-                            source_lang=req.source_lang,
-                            target_lang=req.target_lang,
-                            engine=TranslationEngine.LIBRETRANSLATE,
-                            success=success,
-                            confidence=confidence,
-                            metadata=req.metadata
-                        ))
+                        # 429 Too Many Requests -> Wait and Retry
+                        if resp.status == 429:
+                            last_error = "Rate Limit Exceeded (429 Too Many Requests)"
+                            if attempt < self.MAX_RETRIES - 1:
+                                await asyncio.sleep(self.RETRY_DELAYS[attempt])
+                                continue
+                            else:
+                                return [TranslationResult(r.text, "", r.source_lang, r.target_lang, TranslationEngine.LIBRETRANSLATE, False, "Error: Rate Limit Exceeded (Use local/API key or wait)", quota_exceeded=True) for r in requests]
+                        elif resp.status in (403, 401):
+                            # Ban or API key issue -> Don't retry
+                            return [TranslationResult(r.text, "", r.source_lang, r.target_lang, TranslationEngine.LIBRETRANSLATE, False, f"API Error: {msg[:100]}") for r in requests]
+                        else:
+                            last_error = f"HTTP {resp.status}: {msg[:100]}"
+                            if attempt < self.MAX_RETRIES - 1:
+                                await asyncio.sleep(self.RETRY_DELAYS[attempt])
+                                continue
+                            else:
+                                return [TranslationResult(r.text, "", r.source_lang, r.target_lang, TranslationEngine.LIBRETRANSLATE, False, f"API Error: {last_error}") for r in requests]
+
+                    resp_data = await resp.json(content_type=None)
+
+                if 'translatedText' in resp_data:
+                    translated_list = resp_data['translatedText']
+                    if isinstance(translated_list, str):
+                         translated_list = [translated_list]
+                         
+                    for i, req in enumerate(requests):
+                        if i < len(translated_list):
+                            translated = translated_list[i]
+                            placeholders = all_placeholders[i]
+                            meta = req.metadata if isinstance(req.metadata, dict) else {}
+                            orig_text = meta.get('original_text', req.text)
+
+                            restored = restore_renpy_syntax(translated.strip(), placeholders)
+                            missing = validate_translation_integrity(restored, placeholders)
+
+                            if missing:
+                                injected = inject_missing_placeholders(restored, req.text, placeholders, missing)
+                                if not validate_translation_integrity(injected, placeholders) or restored.strip():
+                                    restored = injected
+                                    missing = False
+
+                            success = not missing
+                            confidence = 0.9 if success else 0.0
+
+                            results.append(TranslationResult(
+                                original_text=orig_text,
+                                translated_text=restored,
+                                source_lang=req.source_lang,
+                                target_lang=req.target_lang,
+                                engine=TranslationEngine.LIBRETRANSLATE,
+                                success=success,
+                                confidence=confidence,
+                                metadata=req.metadata
+                            ))
+                        else:
+                            results.append(TranslationResult(req.text, "", req.source_lang, req.target_lang, TranslationEngine.LIBRETRANSLATE, False, "Missing translation in response"))
+                else:
+                     error_msg = resp_data.get("error", "Unknown API Error")
+                     for req in requests:
+                         results.append(TranslationResult(req.text, "", req.source_lang, req.target_lang, TranslationEngine.LIBRETRANSLATE, False, f"API Error: {error_msg}"))
+                return results
+
+            except Exception as e:
+                # Catch connection errors 
+                last_error = str(e)
+                if isinstance(e, aiohttp.ClientConnectorError):
+                    if self.is_local:
+                        last_error = self._get_text('error_libretranslate_local_offline', "Local server is offline. Please start your LibreTranslate instance (or use Cloud).")
                     else:
-                        results.append(TranslationResult(req.text, "", req.source_lang, req.target_lang, TranslationEngine.LIBRETRANSLATE, False, "Missing translation in response"))
-            else:
-                 error_msg = resp.get("error", "Unknown API Error")
-                 for req in requests:
-                     results.append(TranslationResult(req.text, "", req.source_lang, req.target_lang, TranslationEngine.LIBRETRANSLATE, False, f"API Error: {error_msg}"))
-        except Exception as e:
-            for req in requests:
-                results.append(TranslationResult(req.text, "", req.source_lang, req.target_lang, TranslationEngine.LIBRETRANSLATE, False, f"Connection Error: {e}"))
+                        last_error = f"Connection Refused: Failed to reach {self.base_url}"
+                        
+                if attempt < self.MAX_RETRIES - 1 and not (isinstance(e, aiohttp.ClientConnectorError) and self.is_local):
+                    await asyncio.sleep(self.RETRY_DELAYS[attempt])
+                    continue
+                else:
+                    return [TranslationResult(r.text, "", r.source_lang, r.target_lang, TranslationEngine.LIBRETRANSLATE, False, f"Connection/Request Error: {last_error}") for r in requests]
 
-        return results
+        return [TranslationResult(r.text, "", r.source_lang, r.target_lang, TranslationEngine.LIBRETRANSLATE, False, f"Failed: {last_error}") for r in requests]
 
     def get_supported_languages(self) -> Dict[str, str]:
         # Full list matching LibreTranslate's actual language coverage
@@ -1999,6 +2067,424 @@ class LibreTranslateTranslator(BaseTranslator):
             'tr': 'Turkish', 'uk': 'Ukrainian', 'ur': 'Urdu', 'vi': 'Vietnamese',
             'zh': 'Chinese',
         }
+
+
+class YandexTranslator(BaseTranslator):
+    """
+    Yandex Translate (Widget API) — free, no API key required.
+    
+    Uses the Yandex website-widget endpoint (GET requests) which supports:
+    - Native batch (multiple &text= params per request)
+    - HTML format for placeholder protection (translate="no" spans)
+    - Auto language detection
+    
+    SID is obtained from widget.js and used RAW (no reversal needed).
+    Falls back to Google Translate on total failure.
+    
+    Key discovery (2026-03-09): Widget API requires GET, not POST.
+    POST returns 405 "HTTP method is invalid for this service".
+    SID must NOT be reversed — raw value from widget.js is the correct key.
+    """
+
+    MAX_RETRIES = 3
+    RETRY_DELAYS = [1.5, 3.0, 6.0]
+    # URL safe limit — servers typically handle 8K, we cap at 6K for safety
+    MAX_URL_LENGTH = 6000
+
+    # SID class-level cache (shared across instances within same process)
+    _cached_sid: Optional[str] = None
+    _sid_obtained_at: float = 0.0
+    _sid_lock: Optional[asyncio.Lock] = None  # Lazy init per event-loop
+
+    def __init__(self, proxy_manager=None, config_manager=None):
+        super().__init__(proxy_manager=proxy_manager, config_manager=config_manager)
+        self.logger = logging.getLogger(__name__)
+        self._request_id = 0
+        self._fallback: Optional[BaseTranslator] = None
+        # SID regex for extracting from widget.js
+        self._sid_pattern = re.compile(r"sid\s*:\s*'([0-9a-f.]+)'")
+
+    def set_fallback_translator(self, translator: BaseTranslator):
+        """Set a fallback translator (e.g. GoogleTranslator) for when Yandex fails."""
+        self._fallback = translator
+
+    def _map_lang(self, code: str) -> str:
+        """Map language codes to Yandex format."""
+        if not code:
+            return ""
+        code = code.lower().strip()
+        if code == "auto":
+            return ""  # Empty source means auto-detect in Yandex
+        if code in ("zh-cn", "zh-tw"):
+            return "zh"
+        return code
+
+    async def _fetch_sid(self) -> Optional[str]:
+        """Fetch a fresh SID from Yandex widget.js. Returns raw SID (no reversal needed)."""
+        try:
+            session = await self._get_session()
+            headers = {
+                "User-Agent": random.choice(USER_AGENTS),
+                "Accept": "*/*",
+            }
+            proxy = None
+            if self.use_proxy and self.proxy_manager:
+                p = self.proxy_manager.get_next_proxy()
+                if p:
+                    proxy = p.url
+
+            async with session.get(
+                YANDEX_WIDGET_JS_URL,
+                headers=headers,
+                proxy=proxy,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status != 200:
+                    self.logger.warning(f"Yandex widget.js HTTP {resp.status}")
+                    return None
+                text = await resp.text()
+
+            match = self._sid_pattern.search(text)
+            if not match:
+                self.logger.warning("Yandex SID not found in widget.js")
+                return None
+
+            # Use raw SID directly — no reversal needed for GET-based widget API
+            return match.group(1)
+
+        except Exception as e:
+            self.logger.warning(f"Yandex SID fetch failed: {e}")
+            return None
+
+    async def _get_sid(self) -> Optional[str]:
+        """Get cached SID or fetch a new one (thread-safe via asyncio.Lock)."""
+        # Lazy-init lock (must be created within an event loop context)
+        if YandexTranslator._sid_lock is None:
+            YandexTranslator._sid_lock = asyncio.Lock()
+
+        async with YandexTranslator._sid_lock:
+            now = time.time()
+            if (
+                YandexTranslator._cached_sid
+                and (now - YandexTranslator._sid_obtained_at) < YANDEX_SID_LIFETIME
+            ):
+                return YandexTranslator._cached_sid
+
+            sid = await self._fetch_sid()
+            if sid:
+                YandexTranslator._cached_sid = sid
+                YandexTranslator._sid_obtained_at = now
+                self.logger.debug("Yandex SID refreshed successfully")
+            return sid
+
+    def _next_request_id(self) -> str:
+        """Generate incrementing request ID for Yandex API."""
+        self._request_id += 1
+        return f"{self._request_id}"
+
+    async def _translate_widget(
+        self,
+        texts: List[str],
+        source_lang: str,
+        target_lang: str,
+        sid: str,
+    ) -> Optional[List[str]]:
+        """Translate via Widget API (GET request, native batch, HTML format)."""
+        src = self._map_lang(source_lang)
+        tgt = self._map_lang(target_lang)
+        lang_param = f"{src}-{tgt}" if src else tgt
+
+        req_id = self._next_request_id()
+        url = f"{YANDEX_TRANSLATE_API_URL}/translate"
+
+        # Build query params with multiple text= entries
+        query_parts = [
+            ("srv", "tr-url-widget"),
+            ("id", f"{sid}-{req_id}-0"),
+            ("format", "html"),
+            ("lang", lang_param),
+        ]
+        for t in texts:
+            query_parts.append(("text", t))
+
+        session = await self._get_session()
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        proxy = None
+        if self.use_proxy and self.proxy_manager:
+            p = self.proxy_manager.get_next_proxy()
+            if p:
+                proxy = p.url
+
+        async with session.get(
+            url,
+            params=query_parts,
+            headers=headers,
+            proxy=proxy,
+            timeout=aiohttp.ClientTimeout(total=20),
+        ) as resp:
+            if resp.status == 429:
+                self.logger.warning("Yandex 429 rate limit — backing off")
+                return None
+            if resp.status == 403:
+                self.logger.warning(f"Yandex Widget API HTTP 403")
+                return None
+            if resp.status != 200:
+                self.logger.warning(f"Yandex Widget API HTTP {resp.status}")
+                return None
+
+            data = await resp.json(content_type=None)
+
+        translated_list = data.get("text")
+        if not translated_list or not isinstance(translated_list, list):
+            self.logger.warning(f"Yandex unexpected response: {str(data)[:200]}")
+            return None
+
+        if len(translated_list) != len(texts):
+            self.logger.warning(
+                f"Yandex batch count mismatch: sent {len(texts)}, got {len(translated_list)}"
+            )
+            return None
+
+        return translated_list
+
+    async def translate_single(self, request: TranslationRequest) -> TranslationResult:
+        """Translate a single text via Yandex."""
+        batch_result = await self.translate_batch([request])
+        return batch_result[0] if batch_result else TranslationResult(
+            request.text, "", request.source_lang, request.target_lang,
+            TranslationEngine.YANDEX, False, "Yandex translation failed"
+        )
+
+    async def translate_batch(self, requests: List[TranslationRequest]) -> List[TranslationResult]:
+        """Translate a batch of texts via Yandex Widget API (GET, native batch, HTML format)."""
+        if not requests:
+            return []
+
+        # Prepare: protect Ren'Py syntax with HTML wrapping
+        protected_texts = []       # HTML-wrapped for Widget API (format=html)
+        all_placeholders = []
+
+        for req in requests:
+            meta = req.metadata if isinstance(req.metadata, dict) else {}
+            preprotected = meta.get("preprotected", False)
+            placeholders = meta.get("placeholders")
+
+            if preprotected and isinstance(placeholders, dict):
+                protected_text = req.text
+            else:
+                protected_text, placeholders = protect_renpy_syntax(req.text)
+
+            # Wrap placeholders in translate="no" spans for HTML mode
+            html_text = protected_text
+            for ph in sorted(placeholders.keys(), key=len, reverse=True):
+                html_text = html_text.replace(
+                    ph, f'<span translate="no">{ph}</span>'
+                )
+
+            protected_texts.append(html_text)
+            all_placeholders.append(placeholders)
+
+        source_lang = requests[0].source_lang
+        target_lang = requests[0].target_lang
+
+        # Slice by URL length to stay within GET limits
+        # Base URL overhead: endpoint + srv + id + format + lang ≈ 200 chars
+        BASE_URL_OVERHEAD = 250
+        slices = []
+        current_slice: List[int] = []
+        current_url_len = BASE_URL_OVERHEAD
+        for i, text in enumerate(protected_texts):
+            # Each text= param: "&text=" (6) + URL-encoded text length
+            param_len = 6 + len(urllib.parse.quote(text, safe=""))
+            if current_slice and (current_url_len + param_len > self.MAX_URL_LENGTH):
+                slices.append(current_slice)
+                current_slice = []
+                current_url_len = BASE_URL_OVERHEAD
+            current_slice.append(i)
+            current_url_len += param_len
+        if current_slice:
+            slices.append(current_slice)
+
+        # Try Widget API with SID
+        all_translated: Dict[int, str] = {}
+        sid = await self._get_sid()
+
+        for attempt in range(self.MAX_RETRIES):
+            if not sid:
+                break
+
+            for si, s_indices in enumerate(slices):
+                remaining = [i for i in s_indices if i not in all_translated]
+                if not remaining:
+                    continue
+
+                texts_to_send = [protected_texts[i] for i in remaining]
+                try:
+                    result = await self._translate_widget(
+                        texts_to_send, source_lang, target_lang, sid
+                    )
+                    if result:
+                        for idx, translated in zip(remaining, result):
+                            all_translated[idx] = translated
+                except Exception as e:
+                    self.logger.debug(f"Yandex Widget batch error: {e}")
+
+                # Rate limit between slices
+                if si < len(slices) - 1:
+                    await asyncio.sleep(0.3)
+
+            if len(all_translated) == len(requests):
+                break
+
+            # SID might be stale → refresh once
+            if not all_translated:
+                self.logger.info("Yandex: Refreshing SID after batch failure")
+                YandexTranslator._cached_sid = None
+                sid = await self._get_sid()
+                if not sid:
+                    break
+
+            if attempt < self.MAX_RETRIES - 1:
+                await asyncio.sleep(self.RETRY_DELAYS[attempt])
+
+        # Google fallback for remaining failures
+        still_failed = [i for i in range(len(requests)) if i not in all_translated]
+        if still_failed and self._fallback:
+            if self.status_callback:
+                self.status_callback("info", f"Yandex → Google fallback ({len(still_failed)} texts)")
+            self.logger.info(f"Yandex: Google fallback for {len(still_failed)} texts")
+            fallback_requests = [requests[i] for i in still_failed]
+            try:
+                fallback_results = await self._fallback.translate_batch(fallback_requests)
+                for idx, fb_result in zip(still_failed, fallback_results):
+                    if fb_result.success:
+                        all_translated[idx] = fb_result.translated_text
+            except Exception as e:
+                self.logger.warning(f"Yandex Google fallback error: {e}")
+
+        # Build final results with placeholder restoration
+        results = []
+        for i, req in enumerate(requests):
+            meta = req.metadata if isinstance(req.metadata, dict) else {}
+            orig_text = meta.get("original_text", req.text)
+
+            if i in all_translated:
+                translated = all_translated[i]
+
+                # Strip HTML spans we added
+                translated = re.sub(
+                    r'<span[^>]*translate="no"[^>]*>(.*?)</span>',
+                    r"\1",
+                    translated,
+                )
+
+                placeholders = all_placeholders[i]
+                restored = restore_renpy_syntax(translated.strip(), placeholders)
+                missing = validate_translation_integrity(restored, placeholders)
+
+                if missing:
+                    injected = inject_missing_placeholders(
+                        restored, req.text, placeholders, missing
+                    )
+                    still_missing = validate_translation_integrity(injected, placeholders)
+                    if not still_missing or (restored.strip() and restored.strip() != orig_text.strip()):
+                        restored = injected
+                        missing = False
+
+                results.append(TranslationResult(
+                    original_text=orig_text,
+                    translated_text=restored,
+                    source_lang=req.source_lang,
+                    target_lang=req.target_lang,
+                    engine=TranslationEngine.YANDEX,
+                    success=True,
+                    confidence=0.9 if not missing else 0.0,
+                    metadata=req.metadata,
+                ))
+            else:
+                results.append(TranslationResult(
+                    original_text=orig_text,
+                    translated_text="",
+                    source_lang=req.source_lang,
+                    target_lang=req.target_lang,
+                    engine=TranslationEngine.YANDEX,
+                    success=False,
+                    error="Yandex translation failed (all fallbacks exhausted)",
+                    metadata=req.metadata,
+                ))
+
+        success_count = sum(1 for r in results if r.success)
+        self.logger.debug(f"Yandex batch: {success_count}/{len(results)} successful")
+        return results
+
+    async def detect_language(self, text: str) -> Optional[str]:
+        """Detect language using Yandex API."""
+        sid = await self._get_sid()
+        if not sid:
+            return None
+
+        url = f"{YANDEX_TRANSLATE_API_URL}/detect"
+        params = {
+            "srv": "tr-url-widget",
+            "id": f"{sid}-{self._next_request_id()}-0",
+            "text": text[:200],
+            "hint": "en,ru,tr,de,fr,es,ja,ko,zh",
+        }
+
+        try:
+            session = await self._get_session()
+            headers = {"User-Agent": random.choice(USER_AGENTS)}
+            proxy = None
+            if self.use_proxy and self.proxy_manager:
+                p = self.proxy_manager.get_next_proxy()
+                if p:
+                    proxy = p.url
+
+            async with session.get(
+                url,
+                params=params,
+                headers=headers,
+                proxy=proxy,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json(content_type=None)
+
+            if data.get("code") == 200:
+                return data.get("lang")
+        except Exception as e:
+            self.logger.debug(f"Yandex detect_language error: {e}")
+        return None
+
+    def get_supported_languages(self) -> Dict[str, str]:
+        return {
+            'auto': 'Auto Detect',
+            'af': 'Afrikaans', 'am': 'Amharic', 'ar': 'Arabic', 'az': 'Azerbaijani',
+            'ba': 'Bashkir', 'be': 'Belarusian', 'bg': 'Bulgarian', 'bn': 'Bengali',
+            'bs': 'Bosnian', 'ca': 'Catalan', 'cs': 'Czech', 'cv': 'Chuvash',
+            'cy': 'Welsh', 'da': 'Danish', 'de': 'German', 'el': 'Greek',
+            'en': 'English', 'eo': 'Esperanto', 'es': 'Spanish', 'et': 'Estonian',
+            'eu': 'Basque', 'fa': 'Persian', 'fi': 'Finnish', 'fr': 'French',
+            'ga': 'Irish', 'gd': 'Scottish Gaelic', 'gl': 'Galician', 'gu': 'Gujarati',
+            'he': 'Hebrew', 'hi': 'Hindi', 'hr': 'Croatian', 'ht': 'Haitian Creole',
+            'hu': 'Hungarian', 'hy': 'Armenian', 'id': 'Indonesian', 'is': 'Icelandic',
+            'it': 'Italian', 'ja': 'Japanese', 'jv': 'Javanese', 'ka': 'Georgian',
+            'kk': 'Kazakh', 'km': 'Khmer', 'kn': 'Kannada', 'ko': 'Korean',
+            'ky': 'Kyrgyz', 'la': 'Latin', 'lb': 'Luxembourgish', 'lo': 'Lao',
+            'lt': 'Lithuanian', 'lv': 'Latvian', 'mg': 'Malagasy', 'mi': 'Maori',
+            'mk': 'Macedonian', 'ml': 'Malayalam', 'mn': 'Mongolian', 'mr': 'Marathi',
+            'ms': 'Malay', 'mt': 'Maltese', 'my': 'Myanmar', 'ne': 'Nepali',
+            'nl': 'Dutch', 'no': 'Norwegian', 'pa': 'Punjabi', 'pl': 'Polish',
+            'pt': 'Portuguese', 'ro': 'Romanian', 'ru': 'Russian', 'si': 'Sinhala',
+            'sk': 'Slovak', 'sl': 'Slovenian', 'sq': 'Albanian', 'sr': 'Serbian',
+            'su': 'Sundanese', 'sv': 'Swedish', 'sw': 'Swahili', 'ta': 'Tamil',
+            'te': 'Telugu', 'tg': 'Tajik', 'th': 'Thai', 'tl': 'Filipino',
+            'tr': 'Turkish', 'tt': 'Tatar', 'uk': 'Ukrainian', 'ur': 'Urdu',
+            'uz': 'Uzbek', 'vi': 'Vietnamese', 'xh': 'Xhosa', 'yi': 'Yiddish',
+            'zh': 'Chinese', 'zu': 'Zulu',
+        }
+
 
 class TranslationManager:
     def __init__(self, proxy_manager=None, config_manager=None):

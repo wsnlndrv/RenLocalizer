@@ -53,9 +53,12 @@ _GREEK_TO_LATIN = str.maketrans({
 # Pattern: En az 2 uppercase (Latin veya non-Latin) + rakam/underscore dizisi
 # v2.7.2: Boşluk ile ayrılmış combo'ları da yakala (ВАР 0 → VAR0)
 _TRANSLITERATED_TOKEN_RE = re.compile(
-    r'[A-ZА-ЯΑ-Ω][A-ZА-ЯΑ-Ω0-9_]*(?:\s+\d+)'
-    r'|[A-ZА-ЯΑ-Ω][A-ZА-ЯΑ-Ω0-9_]*\d+'
-    r'|[A-ZА-ЯΑ-Ω][A-ZА-ЯΑ-Ω0-9]*_[A-ZА-ЯΑ-Ω0-9_]+'
+    r'[A-ZА-ЯΑ-Ω][A-ZА-ЯΑ-Ω0-9_]*'
+    r'(?:'
+    r'(?:\s*[0-9]+)+'     # Sequence of digits with optional spaces
+    r'|(?:\s*_[0-9]+)+'   # Sequence of _digits with optional spaces
+    r'|_[A-ZА-ЯΑ-Ω0-9_]+'   # Standard underscore identifiers
+    r')'
 )
 
 # Ren'Py variable patterns
@@ -394,19 +397,30 @@ def restore_renpy_syntax(text: str, placeholders: Dict[str, str]) -> str:
             # Opsiyonel herhangi bir parantez + RLPH içerik + opsiyonel kapanış
             _rlph_recovery_re = re.compile(
                 r'[\u27e6\[\(\{【「〔〚]?\s*'
-                r'([A-Z]{3,5}[A-Z0-9]{4,8}_[A-Z0-9]+)'
+                r'([A-Z]{3,5}[A-Z0-9]{4,8}'
+                r'(?:'
+                r'(?:\s*[0-9]+)+'
+                r'|(?:\s*_[0-9]+)+'
+                r'|_[A-ZА-ЯΑ-Ω0-9_]+'
+                r')'
+                r')'
                 r'\s*[\u27e7\]\)\}】」〕〛]?'
             )
             def _recover_bare_rlph(m):
-                inner = ''.join(m.group(1).split()).upper()
-                inner = unicodedata.normalize('NFKC', inner)
-                _key = _rlph_inner_map.get(inner)
-                if _key:
-                    return vars_only[_key]
+                # Clean the inner content: strip all spaces and underscores for matching
+                inner_raw = m.group(1)
+                inner_clean = re.sub(r'[\s_]+', '', inner_raw).upper()
+                inner_clean = unicodedata.normalize('NFKC', inner_clean)
+                
+                # Check against our map (also cleaned)
+                for _inner_key, _full_key in _rlph_inner_map.items():
+                    if inner_clean == re.sub(r'[\s_]+', '', _inner_key).upper():
+                        return vars_only[_full_key]
                     
-                # Fuzzy match
-                if '_' in inner:
-                    suffix = '_' + inner.split('_')[-1] + '\u27e7'
+                # Fuzzy match by suffix remains (as second fallback)
+                if '_' in inner_raw or ' ' in inner_raw:
+                    # Last part after space or underscore
+                    suffix = '_' + re.split(r'[\s_]+', inner_raw)[-1] + '\u27e7'
                     matches = [k for k in vars_only.keys() if k.endswith(suffix)]
                     if len(matches) == 1:
                         return vars_only[matches[0]]
@@ -428,9 +442,12 @@ def restore_renpy_syntax(text: str, placeholders: Dict[str, str]) -> str:
             normalized = original.translate(_CYRILLIC_TO_LATIN).translate(_GREEK_TO_LATIN)
             if normalized in vars_only:
                 return normalized
-            normalized_nospace = re.sub(r'\s+', '', normalized)
-            if normalized_nospace in vars_only:
-                return normalized_nospace
+            normalized_clean = re.sub(r'[\s_]+', '', normalized)
+            
+            # Check for cleaned version in vars_only
+            for k in vars_only:
+                if normalized_clean == re.sub(r'[\s_]+', '', k).upper():
+                    return k
             return original
         
         result = _TRANSLITERATED_TOKEN_RE.sub(_recover_transliterated, result)

@@ -34,6 +34,7 @@ from src.core.translator import (
     TranslationEngine,
     GoogleTranslator,
     DeepLTranslator,
+    YandexTranslator,
 )
 from src.core.ai_translator import OpenAITranslator, GeminiTranslator, LocalLLMTranslator
 from src.core.output_formatter import RenPyOutputFormatter
@@ -2520,6 +2521,30 @@ init python:
         # Load existing cache for resume
         self.translation_manager.load_cache(cache_file)
 
+        # ================================================================
+        # v2.7.3: External TM — Load selected TM sources
+        # ================================================================
+        _external_tm = None
+        _tm_hit_count = 0
+        if getattr(self.config.translation_settings, 'use_external_tm', False):
+            try:
+                import json as _json
+                tm_source_paths = _json.loads(
+                    getattr(self.config.translation_settings, 'external_tm_sources', '[]')
+                )
+                if tm_source_paths:
+                    from src.tools.external_tm import ExternalTMStore
+                    _external_tm = ExternalTMStore()
+                    loaded = _external_tm.load_sources(tm_source_paths)
+                    if loaded > 0:
+                        self.log_message.emit("info", f"[ExternalTM] {loaded} entry loaded from {_external_tm.loaded_source_count} source(s)")
+                    else:
+                        self.log_message.emit("warning", "[ExternalTM] No entries loaded — TM lookup disabled")
+                        _external_tm = None
+            except Exception as _tm_err:
+                self.logger.warning(f"External TM load failed: {_tm_err}")
+                _external_tm = None
+
         if total == 0:
             # Final Cache Kaydı
             self.translation_manager.save_cache(cache_file)
@@ -2610,6 +2635,21 @@ init python:
             t.status_callback = self.log_message.emit
             self.translation_manager.add_translator(TranslationEngine.LIBRETRANSLATE, t)
 
+        if self.engine == TranslationEngine.YANDEX and self.engine not in self.translation_manager.translators:
+            t = YandexTranslator(
+                proxy_manager=getattr(self.translation_manager, "proxy_manager", None),
+                config_manager=self.config
+            )
+            # Attach Google as fallback
+            fallback = GoogleTranslator(
+                proxy_manager=getattr(self.translation_manager, "proxy_manager", None),
+                config_manager=self.config
+            )
+            fallback.status_callback = self.log_message.emit
+            t.set_fallback_translator(fallback)
+            t.status_callback = self.log_message.emit
+            self.translation_manager.add_translator(TranslationEngine.YANDEX, t)
+
         # ================================================================
         # v2.7.1: Auto-protect character names — glossary'ye ekle
         # ================================================================
@@ -2667,6 +2707,7 @@ init python:
                 # Multi-Group Angle-Pipe (v2.7.5): Çoklu <seg|seg> grupları
                 _multi_group_data = {}  # {batch_entry_idx: (req_start, group_lens, tid, orig_text)}
                 _delimiter_enabled = getattr(self.config.translation_settings, 'enable_delimiter_aware_translation', True)
+                _tm_resolved_indices = set()  # TM ile çözülen entry index'leri — FAZ 1'de atlanacak
                 
                 _prev_entry_text = None  # extend context tracking — reset per batch
                 _prev_entry_file = None  # track file path for cross-file boundary detection
@@ -2678,6 +2719,32 @@ init python:
                         getattr(entry, 'context_path', []),
                         getattr(entry, 'raw_text', None)
                     )
+                    
+                    # ============================================================
+                    # EXTERNAL TM LOOKUP (v2.7.3) — API çağrısı yapmadan çevir
+                    # ============================================================
+                    if _external_tm is not None:
+                        _tm_result = _external_tm.get_exact(entry.original_text)
+                        if _tm_result is not None:
+                            translations[translation_id] = _tm_result
+                            translations.setdefault(entry.original_text, _tm_result)
+                            _tm_hit_count += 1
+                            _tm_resolved_indices.add(entry_idx)  # FAZ 1'de atla
+                            # Diagnostics: TM çevirilerini de raporla
+                            try:
+                                if _tm_result != entry.original_text:
+                                    self.diagnostic_report.mark_translated(
+                                        entry.file_path, translation_id, _tm_result,
+                                        original_text=entry.original_text)
+                                else:
+                                    self.diagnostic_report.mark_unchanged(
+                                        entry.file_path, translation_id,
+                                        original_text=entry.original_text)
+                            except Exception:
+                                pass
+                            _prev_entry_text = entry.original_text
+                            _prev_entry_file = entry.file_path
+                            continue  # API'ye gitmeden devam et
                     
                     # ============================================================
                     # MULTI-GROUP ANGLE-PIPE SPLIT (v2.7.5)
@@ -2855,6 +2922,10 @@ init python:
                 _req_cursor = 0  # Tracks position in results list
                 
                 for entry_idx, entry in enumerate(batch):
+                    # TM ile çözülen entry'leri atla — bunlar için request yok
+                    if entry_idx in _tm_resolved_indices:
+                        continue
+                    
                     if entry_idx in _multi_group_data:
                         # ── Multi-Group Angle-Pipe (v2.7.5) ──
                         req_start, group_lens, tid, orig_text = _multi_group_data[entry_idx]
@@ -3114,6 +3185,14 @@ init python:
             # Final Cache Kaydı
             self.translation_manager.save_cache(cache_file)
             self.log_message.emit("info", self.config.get_log_text('log_cache_saved', path=cache_file, count=len(translations)))
+
+            # External TM istatistikleri (v2.7.3)
+            if _external_tm is not None and _tm_hit_count > 0:
+                _tm_stats = _external_tm.stats
+                self.log_message.emit("info",
+                    f"[ExternalTM] {_tm_hit_count} entries resolved from TM "
+                    f"(hit rate: {_tm_stats['hit_rate']}%, "
+                    f"{_tm_stats['misses']} misses)")
 
         finally:
             # Proper cleanup to avoid Proactor errors on Windows

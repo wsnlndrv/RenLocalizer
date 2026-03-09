@@ -107,6 +107,7 @@ def detect_system_language() -> str:
 @dataclass
 class TranslationSettings:
     """Translation-related settings."""
+    selected_engine: str = "google"  # Persisted engine selection (google, deepl, openai, gemini, deepseek, local_llm, libretranslate, yandex)
     source_language: str = "auto"
     target_language: str = "tr"
     max_concurrent_threads: int = 8  # Lowered from 32 to prevent instant Google bans
@@ -214,6 +215,12 @@ class TranslationSettings:
     # Modern approach (v2.6.7): Token'lar yerine HTML span'lar daha güvenilir
     use_html_protection: bool = False
 
+    # External Translation Memory (v2.7.3) — harici TM desteği
+    use_external_tm: bool = False               # TM lookup aktif mi
+    external_tm_match_mode: str = "exact"        # "exact" | "fuzzy"
+    external_tm_fuzzy_threshold: float = 0.85    # Fuzzy match eşik değeri (0.5–1.0)
+    external_tm_sources: str = "[]"              # Aktif TM kaynak yolları (JSON string)
+
     def __post_init__(self):
         """Validate and clamp all numeric/enum fields to safe ranges."""
         def _safe_int(val, default: int, lo: int, hi: int) -> int:
@@ -246,6 +253,9 @@ class TranslationSettings:
         self.ai_request_delay = _safe_float(self.ai_request_delay, 1.5, 0.0, 60.0)
 
         # --- Enum / allowlist checks ---
+        _valid_engines = ("google", "deepl", "openai", "gemini", "deepseek", "local_llm", "libretranslate", "yandex", "pseudo")
+        if self.selected_engine not in _valid_engines:
+            self.selected_engine = "google"
         if self.deepl_formality not in ("default", "formal", "informal"):
             self.deepl_formality = "default"
         if self.gemini_safety_settings not in ("BLOCK_NONE", "BLOCK_ONLY_HIGH", "STANDARD"):
@@ -264,6 +274,17 @@ class TranslationSettings:
             json.loads(self.custom_function_params)
         except (json.JSONDecodeError, TypeError):
             self.custom_function_params = "{}"
+
+        # External TM validation (v2.7.3)
+        if self.external_tm_match_mode not in ("exact", "fuzzy"):
+            self.external_tm_match_mode = "exact"
+        self.external_tm_fuzzy_threshold = _safe_float(self.external_tm_fuzzy_threshold, 0.85, 0.5, 1.0)
+        try:
+            parsed = json.loads(self.external_tm_sources)
+            if not isinstance(parsed, list) or not all(isinstance(p, str) for p in parsed):
+                self.external_tm_sources = "[]"
+        except (json.JSONDecodeError, TypeError):
+            self.external_tm_sources = "[]"
 
 @dataclass
 class ApiKeys:

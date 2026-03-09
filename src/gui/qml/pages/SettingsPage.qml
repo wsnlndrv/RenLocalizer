@@ -90,48 +90,15 @@ Rectangle {
                 }
             }
 
-            // ==================== ÇEVİRİ FİLTRELERİ ====================
-            SettingsGroup {
-                title: "🔍 " + (backend.uiTrigger, backend.getTextWithDefault("translation_filters", "What to translate?"))
-                
-                GridLayout {
-                    columns: 2
-                    Layout.fillWidth: true
-                    rowSpacing: 10
-                    columnSpacing: 20
-
-                    FilterCheck { key: "dialogue"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_dialogue_label", "Dialogues")) }
-                    FilterCheck { key: "menu"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_menu_label", "Menu Options")) }
-                    FilterCheck { key: "buttons"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_buttons_label", "Buttons")) }
-                    FilterCheck { key: "notifications"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_notifications_label", "Notifications")) }
-                    FilterCheck { key: "alt_text"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_alt_text_label", "Alt Texts")) }
-                    FilterCheck { key: "confirmations"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_confirmations_label", "Confirmations")) }
-                    FilterCheck { key: "input_text"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_input_label", "Input Fields")) }
-                    FilterCheck { key: "ui"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_ui_label", "UI Texts")) }
-                    FilterCheck { key: "gui_strings"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_gui_label", "GUI Strings")) }
-                    FilterCheck { key: "style_strings"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_style_label", "Style Strings")) }
-                    FilterCheck { key: "renpy_functions"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_renpy_func_label", "Ren'Py Functions")) }
-                    FilterCheck { key: "config_strings"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_config_label", "Config Strings")) }
-                    FilterCheck { key: "define_strings"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_define_label", "Define Strings")) }
-                    FilterCheck { key: "character_names"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_char_label", "Character Names")) }
-                }
-            }
-
             // ==================== API AYARLARI ====================
             SettingsGroup {
-                title: "🔑 " + (backend.uiTrigger, backend.getTextWithDefault("api_keys", "API Keys"))
+                title: "🔌 " + (backend.uiTrigger, backend.getTextWithDefault("settings_engines_title", "Translation Engines & APIs"))
                 
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 20
                     
-                    // Google API Key (Opsiyonel)
-                    ApiField {
-                        label: (backend.uiTrigger, backend.getTextWithDefault("google_api_title", "Google API Key (Optional)")); 
-                        text: settingsBackend.getGoogleApiKey ? settingsBackend.getGoogleApiKey() : ""; 
-                        onChanged: (newValue) => { if(settingsBackend.setGoogleApiKey) settingsBackend.setGoogleApiKey(newValue) }
-                    }
-                    
+
                     // DeepL API Key
                     ColumnLayout {
                         spacing: 8
@@ -266,12 +233,176 @@ Rectangle {
                             }
                         }
                     }
+
+                    // Local LLM Section
+                    Label { text: "🖥️ " + (backend.uiTrigger, backend.getTextWithDefault("settings_local_llm_title", "Local LLM Settings")); font.bold: true; color: root.mainTextColor; Layout.topMargin: 10 }
+                    Label {
+                        text: (backend.uiTrigger, backend.getTextWithDefault("settings_local_llm_desc", "Connect local AI apps (Ollama, LM Studio etc.) for context-aware, highly accurate translations that remember previous lines."))
+                        color: "#999"
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                        font.pixelSize: 13
+                        bottomPadding: 5
+                    }
+
+                    RowLayout {
+                         Label { text: (backend.uiTrigger, backend.getTextWithDefault("local_llm_preset_label", "Preset:")); color: "#ccc"; Layout.preferredWidth: 100 }
+                         ComboBox {
+                             Layout.fillWidth: true
+                             model: settingsBackend.getLocalLLMPresets()
+                             textRole: "name"
+                             onActivated: {
+                                 var result = settingsBackend.applyLocalLLMPreset(currentText)
+                                 var data = JSON.parse(result)
+                                 llmUrlField.text = data.url
+                                 llmModelField.text = data.model
+                             }
+                         }
+                    }
+                    TextField { 
+                        id: llmUrlField; 
+                        Layout.fillWidth: true; 
+                        Layout.preferredHeight: 40
+                        text: settingsBackend.getLocalLLMUrl(); 
+                        onEditingFinished: settingsBackend.setLocalLLMUrl(text); 
+                        placeholderText: text.length > 0 ? "" : (backend.uiTrigger, backend.getTextWithDefault("local_llm_url_placeholder", "Server URL"))
+                        leftPadding: 12; rightPadding: 12; color: root.mainTextColor
+                        verticalAlignment: TextInput.AlignVCenter
+                        background: Rectangle { radius: 8; color: root.inputBackground; border.color: root.borderColor }
+                        placeholderTextColor: Qt.rgba(root.mainTextColor.r, root.mainTextColor.g, root.mainTextColor.b, 0.45)
+                    }
+                    TextField { 
+                        id: llmModelField; 
+                        Layout.fillWidth: true; 
+                        Layout.preferredHeight: 40
+                        text: settingsBackend.getLocalLLMModel(); 
+                        onEditingFinished: settingsBackend.setLocalLLMModel(text); 
+                        placeholderText: text.length > 0 ? "" : (backend.uiTrigger, backend.getTextWithDefault("local_llm_model_placeholder", "Model Name"))
+                        leftPadding: 12; rightPadding: 12; color: root.mainTextColor
+                        verticalAlignment: TextInput.AlignVCenter
+                        background: Rectangle { radius: 8; color: root.inputBackground; border.color: root.borderColor }
+                        placeholderTextColor: Qt.rgba(root.mainTextColor.r, root.mainTextColor.g, root.mainTextColor.b, 0.45)
+                    }
+                    
+                    RowLayout {
+                        SettingsRow { label: (backend.uiTrigger, backend.getTextWithDefault("local_llm_timeout_label", "Timeout (sec):")); Layout.fillWidth: true;
+                            SpinBox { from: 10; to: 600; value: settingsBackend.getLocalLLMTimeout(); onValueChanged: settingsBackend.setLocalLLMTimeout(value); editable: true }
+                        }
+                    }
+
+                    Button {
+                        text: "🔌 " + (backend.uiTrigger, backend.getTextWithDefault("test_local_llm_connection", "Test Connection"))
+                        Layout.fillWidth: true; highlighted: true
+                        onClicked: testResultLabel.text = settingsBackend.testLocalLLMConnection()
+                    }
+                    Label { id: testResultLabel; Layout.fillWidth: true; color: text.includes("Success") ? "#6bcb77" : "#ff6b6b"; wrapMode: Text.Wrap }
+
+                    // LibreTranslate Section
+                    Label { text: "🌐 " + (backend.uiTrigger, backend.getTextWithDefault("settings_libretranslate_title", "LibreTranslate (Local / Self-hosted)")); font.bold: true; color: root.mainTextColor; Layout.topMargin: 10 }
+                    Label {
+                        text: (backend.uiTrigger, backend.getTextWithDefault("settings_libretranslate_desc", "Connect LibreTranslate, Apertium or any compatible local translation server for fully offline, privacy-friendly machine translations."))
+                        color: "#999"
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                        font.pixelSize: 13
+                        bottomPadding: 5
+                    }
+
+                    RowLayout {
+                        Label { text: (backend.uiTrigger, backend.getTextWithDefault("libretranslate_preset_label", "Preset:")); color: "#ccc"; Layout.preferredWidth: 100 }
+                        ComboBox {
+                            Layout.fillWidth: true
+                            model: settingsBackend.getLibreTranslatePresets()
+                            textRole: "name"
+                            onActivated: {
+                                var result = settingsBackend.applyLibreTranslatePreset(currentText)
+                                var data = JSON.parse(result)
+                                libreUrlField.text = data.url
+                            }
+                        }
+                    }
+
+                    TextField {
+                        id: libreUrlField
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 40
+                        text: settingsBackend.getLibreTranslateUrl()
+                        onEditingFinished: settingsBackend.setLibreTranslateUrl(text)
+                        placeholderText: text.length > 0 ? "" : (backend.uiTrigger, backend.getTextWithDefault("libretranslate_url_placeholder", "Server URL (e.g. http://localhost:5000)"))
+                        leftPadding: 12; rightPadding: 12; color: root.mainTextColor
+                        verticalAlignment: TextInput.AlignVCenter
+                        background: Rectangle { radius: 8; color: root.inputBackground; border.color: root.borderColor }
+                        placeholderTextColor: Qt.rgba(root.mainTextColor.r, root.mainTextColor.g, root.mainTextColor.b, 0.45)
+                    }
+                    TextField {
+                        id: libreApiKeyField
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 40
+                        text: settingsBackend.getLibreTranslateApiKey()
+                        onEditingFinished: settingsBackend.setLibreTranslateApiKey(text)
+                        placeholderText: text.length > 0 ? "" : (backend.uiTrigger, backend.getTextWithDefault("libretranslate_api_key_placeholder", "API Key (optional, for managed instances)"))
+                        leftPadding: 12; rightPadding: 12; color: root.mainTextColor
+                        echoMode: TextInput.Password
+                        verticalAlignment: TextInput.AlignVCenter
+                        background: Rectangle { radius: 8; color: root.inputBackground; border.color: root.borderColor }
+                        placeholderTextColor: Qt.rgba(root.mainTextColor.r, root.mainTextColor.g, root.mainTextColor.b, 0.45)
+                    }
+                    Button {
+                        text: "🔌 " + (backend.uiTrigger, backend.getTextWithDefault("test_libretranslate_connection", "Test Connection"))
+                        Layout.fillWidth: true; highlighted: true
+                        onClicked: libreTestResult.text = settingsBackend.testLibreTranslateConnection()
+                    }
+                    Label { id: libreTestResult; Layout.fillWidth: true; color: text.includes("✓") ? "#6bcb77" : "#ff6b6b"; wrapMode: Text.Wrap }
+
+                    // Yandex Translate Section
+                    Label { text: "🔵 " + (backend.uiTrigger, backend.getTextWithDefault("settings_yandex_title", "Yandex Translate (Free)")); font.bold: true; color: root.mainTextColor; Layout.topMargin: 10 }
+                    Label {
+                        text: (backend.uiTrigger, backend.getTextWithDefault("settings_yandex_desc", "Zero configuration needed — works out of the box. No API key, no URL. Use the button below to verify Yandex servers are reachable from your network (useful behind firewalls or in regions where Yandex may be restricted)."))
+                        color: "#999"
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                        font.pixelSize: 13
+                        bottomPadding: 5
+                    }
+                    Button {
+                        text: "🔌 " + (backend.uiTrigger, backend.getTextWithDefault("test_yandex_connection", "Test Connection"))
+                        Layout.fillWidth: true; highlighted: true
+                        onClicked: yandexTestResult.text = settingsBackend.testYandexConnection()
+                    }
+                    Label { id: yandexTestResult; Layout.fillWidth: true; color: text.includes("✓") ? "#6bcb77" : "#ff6b6b"; wrapMode: Text.Wrap }
+                }
+            }
+
+            // ==================== ÇEVİRİ FİLTRELERİ ====================
+            SettingsGroup {
+                title: "🔍 " + (backend.uiTrigger, backend.getTextWithDefault("translation_filters", "What to translate?"))
+                
+                GridLayout {
+                    columns: 2
+                    Layout.fillWidth: true
+                    rowSpacing: 10
+                    columnSpacing: 20
+
+                    FilterCheck { key: "dialogue"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_dialogue_label", "Dialogues")) }
+                    FilterCheck { key: "menu"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_menu_label", "Menu Options")) }
+                    FilterCheck { key: "buttons"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_buttons_label", "Buttons")) }
+                    FilterCheck { key: "notifications"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_notifications_label", "Notifications")) }
+                    FilterCheck { key: "alt_text"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_alt_text_label", "Alt Texts")) }
+                    FilterCheck { key: "confirmations"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_confirmations_label", "Confirmations")) }
+                    FilterCheck { key: "input_text"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_input_label", "Input Fields")) }
+                    FilterCheck { key: "ui"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_ui_label", "UI Texts")) }
+                    FilterCheck { key: "gui_strings"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_gui_label", "GUI Strings")) }
+                    FilterCheck { key: "style_strings"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_style_label", "Style Strings")) }
+                    FilterCheck { key: "renpy_functions"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_renpy_func_label", "Ren'Py Functions")) }
+                    FilterCheck { key: "config_strings"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_config_label", "Config Strings")) }
+                    FilterCheck { key: "define_strings"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_define_label", "Define Strings")) }
+                    FilterCheck { key: "character_names"; label: (backend.uiTrigger, backend.getTextWithDefault("translate_char_label", "Character Names")) }
                 }
             }
 
             // ==================== PERFORMANS & TEKNİK ====================
             SettingsGroup {
-                title: "⚙️ " + (backend.uiTrigger, backend.getTextWithDefault("settings_advanced", "Advanced & Performance"))
+                title: "⚡ " + (backend.uiTrigger, backend.getTextWithDefault("settings_network_title", "Network & Performance"))
                 
                 ColumnLayout {
                     Layout.fillWidth: true
@@ -297,16 +428,6 @@ Rectangle {
                              checked: settingsBackend.getEnableLingvaFallback() 
                              onCheckedChanged: settingsBackend.setEnableLingvaFallback(checked) 
                          }
-                         CheckBox { 
-                             text: (backend.uiTrigger, backend.getTextWithDefault("settings_use_html_protection", "HTML Wrap Protection (Zenpy-Style)"))
-                             checked: settingsBackend.getUseHtmlProtection() 
-                             enabled: backend.selectedEngine !== "google"
-                             onCheckedChanged: if (enabled) settingsBackend.setUseHtmlProtection(checked)
-                             ToolTip.visible: hovered
-                             ToolTip.text: enabled
-                                ? (backend.uiTrigger, backend.getTextWithDefault("tooltip_html_protection", "Protects placeholders without breaking them. Uses Google Translate's <span class='notranslate'> tag."))
-                                : (backend.uiTrigger, backend.getTextWithDefault("tooltip_html_protection_google_disabled", "Disabled for Google web endpoint. Token-based placeholder protection is used automatically."))
-                         }
                     }
 
                     RowLayout {
@@ -321,8 +442,6 @@ Rectangle {
 
                     RowLayout {
                         SettingsRow { label: (backend.uiTrigger, backend.getTextWithDefault("request_delay_label", "Request Delay (sec):")); Layout.fillWidth: true;
-                            // Backend expects float, but SpinBox works with Int. 
-                            // Using DoubleSpinBox logic: value 10 = 0.1s
                             DoubleSpinBox { 
                                 from: 0; to: 1000; stepSize: 10 
                                 value: settingsBackend.getRequestDelay() * 100 
@@ -341,146 +460,9 @@ Rectangle {
                         }
                     }
 
-                    // Deep Scan ve RPYC Reader artık varsayılan olarak açık ve gizlendi
-                    // DescriptiveCheck { 
-                    //     label: (backend.uiTrigger, backend.getTextWithDefault("deep_scan", "Derin Tarama"))
-                    //     description: (backend.uiTrigger, backend.getTextWithDefault("deep_scan_desc", ""))
-                    //     checked: settingsBackend.getEnableDeepScan()
-                    //     onToggled: (isChecked) => settingsBackend.setEnableDeepScan(isChecked)
-                    // }
+                    // Proxy Settings section inside Network & Performance
+                    Label { text: (backend.uiTrigger, backend.getTextWithDefault("group_proxy", "🌐 Proxy Settings")); font.bold: true; color: root.mainTextColor; Layout.topMargin: 10 }
                     
-                    // DescriptiveCheck { 
-                    //     label: (backend.uiTrigger, backend.getTextWithDefault("enable_rpyc_reader_label", "RPYC Okuyucu"))
-                    //     description: (backend.uiTrigger, backend.getTextWithDefault("rpyc_reader_desc", ""))
-                    //     checked: settingsBackend.getEnableRpycReader()
-                    //     onToggled: (isChecked) => settingsBackend.setEnableRpycReader(isChecked)
-                    // }
-
-                    DescriptiveCheck { 
-                        label: (backend.uiTrigger, backend.getTextWithDefault("scan_rpym_files", "Scan .rpym Files"))
-                        description: (backend.uiTrigger, backend.getTextWithDefault("scan_rpym_files_desc", ""))
-                        checked: settingsBackend.getScanRpymFiles()
-                        onToggled: (isChecked) => settingsBackend.setScanRpymFiles(isChecked)
-                    }
-
-                    DescriptiveCheck { 
-                        label: (backend.uiTrigger, backend.getTextWithDefault("use_cache_label", "Use Translation Memory"))
-                        description: (backend.uiTrigger, backend.getTextWithDefault("use_cache_desc", ""))
-                        checked: settingsBackend.getUseCache()
-                        onToggled: (isChecked) => settingsBackend.setUseCache(isChecked)
-                    }
-
-                    DescriptiveCheck { 
-                        label: (backend.uiTrigger, backend.getTextWithDefault("use_global_cache", "Global TM (Portable)"))
-                        description: (backend.uiTrigger, backend.getTextWithDefault("use_global_cache_desc", ""))
-                        checked: settingsBackend.getUseGlobalCache()
-                        onToggled: (isChecked) => settingsBackend.setUseGlobalCache(isChecked)
-                    }
-
-                    DescriptiveCheck { 
-                        label: (backend.uiTrigger, backend.getTextWithDefault("exclude_system_folders", "Exclude System Folders"))
-                        description: (backend.uiTrigger, backend.getTextWithDefault("exclude_system_folders_desc", ""))
-                        checked: settingsBackend.getExcludeSystemFolders()
-                        onToggled: (isChecked) => settingsBackend.setExcludeSystemFolders(isChecked)
-                    }
-                    
-                    DescriptiveCheck { 
-                        label: (backend.uiTrigger, backend.getTextWithDefault("aggressive_retry", "Aggressive Translation"))
-                        description: (backend.uiTrigger, backend.getTextWithDefault("aggressive_retry_desc", ""))
-                        checked: settingsBackend.getAggressiveRetry()
-                        onToggled: (isChecked) => settingsBackend.setAggressiveRetry(isChecked)
-                    }
-
-                    // Runtime Hook artık varsayılan açık ve gizli (Kritik özellik)
-                    // DescriptiveCheck { 
-                    //    label: (backend.uiTrigger, backend.getTextWithDefault("force_runtime", "Zorla Çeviri (Force Translate)"))
-                    //    description: (backend.uiTrigger, backend.getTextWithDefault("force_runtime_desc", ""))
-                    //    checked: settingsBackend.getForceRuntime()
-                    //    onToggled: (isChecked) => settingsBackend.setForceRuntime(isChecked)
-                    // }
-
-                    DescriptiveCheck { 
-                        label: (backend.uiTrigger, backend.getTextWithDefault("show_debug_engines", "Show Debug Engines"))
-                        description: (backend.uiTrigger, backend.getTextWithDefault("show_debug_engines_desc", ""))
-                        checked: settingsBackend.getShowDebugEngines()
-                        onToggled: (isChecked) => settingsBackend.setShowDebugEngines(isChecked)
-                    }
-
-                    DescriptiveCheck {
-                        label: (backend.uiTrigger, backend.getTextWithDefault("auto_hook_gen", "Auto-Generate Hook After Translation"))
-                        description: (backend.uiTrigger, backend.getTextWithDefault("auto_hook_gen_desc", ""))
-                        checked: settingsBackend.getAutoHook()
-                        onToggled: (isChecked) => settingsBackend.setAutoHook(isChecked)
-                    }
-
-                    DescriptiveCheck { 
-                        label: (backend.uiTrigger, backend.getTextWithDefault("auto_unren", "Automatic RPA Extraction"))
-                        description: (backend.uiTrigger, backend.getTextWithDefault("auto_unren_desc", ""))
-                        checked: settingsBackend.getAutoUnren()
-                        onToggled: (isChecked) => settingsBackend.setAutoUnren(isChecked)
-                    }
-
-                    DescriptiveCheck {
-                        label: (backend.uiTrigger, backend.getTextWithDefault("auto_protect_char_names", "Auto-Protect Character Names"))
-                        description: (backend.uiTrigger, backend.getTextWithDefault("auto_protect_char_names_desc", "Automatically protect character names from translation"))
-                        checked: settingsBackend.getAutoProtectCharNames()
-                        onToggled: (isChecked) => settingsBackend.setAutoProtectCharNames(isChecked)
-                    }
-
-                    // Custom Function Params (JSON)
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 6
-                        Label {
-                            text: (backend.uiTrigger, backend.getTextWithDefault("custom_function_params_label", "Custom Function Params (JSON):"))
-                            color: "#ccc"
-                            font.bold: true
-                            Layout.fillWidth: true
-                            wrapMode: Text.Wrap
-                        }
-                        Label {
-                            text: (backend.uiTrigger, backend.getTextWithDefault("custom_function_params_desc", "Define which custom Ren'Py functions should have their text parameters extracted for translation."))
-                            color: root.secondaryTextColor
-                            font.pixelSize: 12
-                            Layout.fillWidth: true
-                            wrapMode: Text.Wrap
-                        }
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Math.max(80, customFuncArea.contentHeight + 24)
-                            color: root.inputBackground
-                            radius: 8
-                            border.color: root.borderColor
-                            border.width: 1
-                            ScrollView {
-                                anchors.fill: parent
-                                clip: true
-                                ScrollBar.vertical.policy: ScrollBar.AsNeeded
-                                TextArea {
-                                    id: customFuncArea
-                                    text: settingsBackend.getCustomFunctionParams()
-                                    placeholderText: '{"MyFunc": {"pos": [0, 1]}, "notify": {"pos": [0]}}'
-                                    color: root.mainTextColor
-                                    font.pixelSize: 13
-                                    font.family: "Consolas"
-                                    wrapMode: TextEdit.Wrap
-                                    leftPadding: 12; rightPadding: 12; topPadding: 12; bottomPadding: 12
-                                    selectByMouse: true
-                                    background: null
-                                    onEditingFinished: settingsBackend.setCustomFunctionParams(text)
-                                    placeholderTextColor: Qt.rgba(root.mainTextColor.r, root.mainTextColor.g, root.mainTextColor.b, 0.35)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ==================== PROXY AYARLARI ====================
-            SettingsGroup {
-                title: "🌐 " + (backend.uiTrigger, backend.getTextWithDefault("group_proxy", "Proxy Settings"))
-                ColumnLayout {
-                    Layout.fillWidth: true; spacing: 12
                     DescriptiveCheck { 
                         label: (backend.uiTrigger, backend.getTextWithDefault("proxy_enabled", "Use Proxy"))
                         description: (backend.uiTrigger, backend.getTextWithDefault("enable_proxy_tooltip", ""))
@@ -576,142 +558,9 @@ Rectangle {
                 }
             }
 
-            // ==================== YEREL LLM ====================
-            // ... (Already mostly there, but adding some layout polish)
-            SettingsGroup {
-                title: "🖥️ " + (backend.uiTrigger, backend.getTextWithDefault("settings_local_llm_title", "Local LLM Settings"))
-                ColumnLayout {
-                    Layout.fillWidth: true; spacing: 15
-                    
-                    Label {
-                        text: (backend.uiTrigger, backend.getTextWithDefault("settings_local_llm_desc", "Connect local AI apps (Ollama, LM Studio etc.) for context-aware, highly accurate translations that remember previous lines."))
-                        color: "#999"
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                        font.pixelSize: 13
-                        bottomPadding: 5
-                    }
-
-                    RowLayout {
-                         Label { text: (backend.uiTrigger, backend.getTextWithDefault("local_llm_preset_label", "Preset:")); color: "#ccc"; Layout.preferredWidth: 100 }
-                         ComboBox {
-                             Layout.fillWidth: true
-                             model: settingsBackend.getLocalLLMPresets()
-                             textRole: "name"
-                             onActivated: {
-                                 var result = settingsBackend.applyLocalLLMPreset(currentText)
-                                 var data = JSON.parse(result)
-                                 llmUrlField.text = data.url
-                                 llmModelField.text = data.model
-                             }
-                         }
-                    }
-                    TextField { 
-                        id: llmUrlField; 
-                        Layout.fillWidth: true; 
-                        Layout.preferredHeight: 40
-                        text: settingsBackend.getLocalLLMUrl(); 
-                        onEditingFinished: settingsBackend.setLocalLLMUrl(text); 
-                        placeholderText: text.length > 0 ? "" : (backend.uiTrigger, backend.getTextWithDefault("local_llm_url_placeholder", "Server URL"))
-                        leftPadding: 12; rightPadding: 12; color: root.mainTextColor
-                        verticalAlignment: TextInput.AlignVCenter
-                        background: Rectangle { radius: 8; color: root.inputBackground; border.color: root.borderColor }
-                        placeholderTextColor: Qt.rgba(root.mainTextColor.r, root.mainTextColor.g, root.mainTextColor.b, 0.45)
-                    }
-                    TextField { 
-                        id: llmModelField; 
-                        Layout.fillWidth: true; 
-                        Layout.preferredHeight: 40
-                        text: settingsBackend.getLocalLLMModel(); 
-                        onEditingFinished: settingsBackend.setLocalLLMModel(text); 
-                        placeholderText: text.length > 0 ? "" : (backend.uiTrigger, backend.getTextWithDefault("local_llm_model_placeholder", "Model Name"))
-                        leftPadding: 12; rightPadding: 12; color: root.mainTextColor
-                        verticalAlignment: TextInput.AlignVCenter
-                        background: Rectangle { radius: 8; color: root.inputBackground; border.color: root.borderColor }
-                        placeholderTextColor: Qt.rgba(root.mainTextColor.r, root.mainTextColor.g, root.mainTextColor.b, 0.45)
-                    }
-                    
-                    RowLayout {
-                        SettingsRow { label: (backend.uiTrigger, backend.getTextWithDefault("local_llm_timeout_label", "Timeout (sec):")); Layout.fillWidth: true;
-                            SpinBox { from: 10; to: 600; value: settingsBackend.getLocalLLMTimeout(); onValueChanged: settingsBackend.setLocalLLMTimeout(value); editable: true }
-                        }
-                    }
-
-                    Button {
-                        text: "🔌 " + (backend.uiTrigger, backend.getTextWithDefault("test_local_llm_connection", "Test Connection"))
-                        Layout.fillWidth: true; highlighted: true
-                        onClicked: testResultLabel.text = settingsBackend.testLocalLLMConnection()
-                    }
-                    Label { id: testResultLabel; Layout.fillWidth: true; color: text.includes("Success") ? "#6bcb77" : "#ff6b6b"; wrapMode: Text.Wrap }
-                }
-            }
-
-            // ==================== LIBRETRANSLATE ====================
-            SettingsGroup {
-                title: "🌐 " + (backend.uiTrigger, backend.getTextWithDefault("settings_libretranslate_title", "LibreTranslate (Local / Self-hosted)"))
-                ColumnLayout {
-                    Layout.fillWidth: true; spacing: 15
-
-                    Label {
-                        text: (backend.uiTrigger, backend.getTextWithDefault("settings_libretranslate_desc", "Connect LibreTranslate, Apertium or any compatible local translation server for fully offline, privacy-friendly machine translations."))
-                        color: "#999"
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                        font.pixelSize: 13
-                        bottomPadding: 5
-                    }
-
-                    RowLayout {
-                        Label { text: (backend.uiTrigger, backend.getTextWithDefault("libretranslate_preset_label", "Preset:")); color: "#ccc"; Layout.preferredWidth: 100 }
-                        ComboBox {
-                            Layout.fillWidth: true
-                            model: settingsBackend.getLibreTranslatePresets()
-                            textRole: "name"
-                            onActivated: {
-                                var result = settingsBackend.applyLibreTranslatePreset(currentText)
-                                var data = JSON.parse(result)
-                                libreUrlField.text = data.url
-                            }
-                        }
-                    }
-
-                    TextField {
-                        id: libreUrlField
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 40
-                        text: settingsBackend.getLibreTranslateUrl()
-                        onEditingFinished: settingsBackend.setLibreTranslateUrl(text)
-                        placeholderText: text.length > 0 ? "" : (backend.uiTrigger, backend.getTextWithDefault("libretranslate_url_placeholder", "Server URL (e.g. http://localhost:5000)"))
-                        leftPadding: 12; rightPadding: 12; color: root.mainTextColor
-                        verticalAlignment: TextInput.AlignVCenter
-                        background: Rectangle { radius: 8; color: root.inputBackground; border.color: root.borderColor }
-                        placeholderTextColor: Qt.rgba(root.mainTextColor.r, root.mainTextColor.g, root.mainTextColor.b, 0.45)
-                    }
-                    TextField {
-                        id: libreApiKeyField
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 40
-                        text: settingsBackend.getLibreTranslateApiKey()
-                        onEditingFinished: settingsBackend.setLibreTranslateApiKey(text)
-                        placeholderText: text.length > 0 ? "" : (backend.uiTrigger, backend.getTextWithDefault("libretranslate_api_key_placeholder", "API Key (optional, for managed instances)"))
-                        leftPadding: 12; rightPadding: 12; color: root.mainTextColor
-                        echoMode: TextInput.Password
-                        verticalAlignment: TextInput.AlignVCenter
-                        background: Rectangle { radius: 8; color: root.inputBackground; border.color: root.borderColor }
-                        placeholderTextColor: Qt.rgba(root.mainTextColor.r, root.mainTextColor.g, root.mainTextColor.b, 0.45)
-                    }
-                    Button {
-                        text: "🔌 " + (backend.uiTrigger, backend.getTextWithDefault("test_libretranslate_connection", "Test Connection"))
-                        Layout.fillWidth: true; highlighted: true
-                        onClicked: libreTestResult.text = settingsBackend.testLibreTranslateConnection()
-                    }
-                    Label { id: libreTestResult; Layout.fillWidth: true; color: text.includes("✓") ? "#6bcb77" : "#ff6b6b"; wrapMode: Text.Wrap }
-                }
-            }
-
             // ==================== AI MODEL PARAMETRELERİ ====================
             SettingsGroup {
-                title: "🎛️ AI " + (backend.uiTrigger, backend.getTextWithDefault("settings_ai_model_params", "Model Parameters"))
+                title: "🧠 " + (backend.uiTrigger, backend.getTextWithDefault("settings_ai_tuning_title", "AI Tuning & Parameters"))
                 
                 ColumnLayout {
                     Layout.fillWidth: true
@@ -822,6 +671,151 @@ Rectangle {
                                     bottomPadding: 12
                                     selectByMouse: true
                                     background: null
+                                    placeholderTextColor: Qt.rgba(root.mainTextColor.r, root.mainTextColor.g, root.mainTextColor.b, 0.35)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ==================== SİSTEM & TEKNİK AYARLAR ====================
+            SettingsGroup {
+                title: "🛠️ " + (backend.uiTrigger, backend.getTextWithDefault("settings_system_title", "System & Technical Settings"))
+                
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+                    
+                    CheckBox { 
+                        text: (backend.uiTrigger, backend.getTextWithDefault("settings_use_html_protection", "HTML Wrap Protection (Zenpy-Style)"))
+                        checked: settingsBackend.getUseHtmlProtection() 
+                        enabled: backend.selectedEngine !== "google"
+                        onCheckedChanged: if (enabled) settingsBackend.setUseHtmlProtection(checked)
+                        ToolTip.visible: hovered
+                        ToolTip.text: enabled
+                            ? (backend.uiTrigger, backend.getTextWithDefault("tooltip_html_protection", "Protects placeholders without breaking them. Uses Google Translate's <span class='notranslate'> tag."))
+                            : (backend.uiTrigger, backend.getTextWithDefault("tooltip_html_protection_google_disabled", "Disabled for Google web endpoint. Token-based placeholder protection is used automatically."))
+                    }
+
+                    DescriptiveCheck { 
+                        label: (backend.uiTrigger, backend.getTextWithDefault("scan_rpym_files", "Scan .rpym Files"))
+                        description: (backend.uiTrigger, backend.getTextWithDefault("scan_rpym_files_desc", ""))
+                        checked: settingsBackend.getScanRpymFiles()
+                        onToggled: (isChecked) => settingsBackend.setScanRpymFiles(isChecked)
+                    }
+
+                    DescriptiveCheck { 
+                        label: (backend.uiTrigger, backend.getTextWithDefault("use_cache_label", "Use Translation Memory"))
+                        description: (backend.uiTrigger, backend.getTextWithDefault("use_cache_desc", ""))
+                        checked: settingsBackend.getUseCache()
+                        onToggled: (isChecked) => settingsBackend.setUseCache(isChecked)
+                    }
+
+                    DescriptiveCheck { 
+                        label: (backend.uiTrigger, backend.getTextWithDefault("use_global_cache", "Global TM (Portable)"))
+                        description: (backend.uiTrigger, backend.getTextWithDefault("use_global_cache_desc", ""))
+                        checked: settingsBackend.getUseGlobalCache()
+                        onToggled: (isChecked) => settingsBackend.setUseGlobalCache(isChecked)
+                    }
+
+                    DescriptiveCheck { 
+                        label: (backend.uiTrigger, backend.getTextWithDefault("exclude_system_folders", "Exclude System Folders"))
+                        description: (backend.uiTrigger, backend.getTextWithDefault("exclude_system_folders_desc", ""))
+                        checked: settingsBackend.getExcludeSystemFolders()
+                        onToggled: (isChecked) => settingsBackend.setExcludeSystemFolders(isChecked)
+                    }
+                    
+                    DescriptiveCheck { 
+                        label: (backend.uiTrigger, backend.getTextWithDefault("aggressive_retry", "Aggressive Translation"))
+                        description: (backend.uiTrigger, backend.getTextWithDefault("aggressive_retry_desc", ""))
+                        checked: settingsBackend.getAggressiveRetry()
+                        onToggled: (isChecked) => settingsBackend.setAggressiveRetry(isChecked)
+                    }
+
+                    DescriptiveCheck { 
+                        label: (backend.uiTrigger, backend.getTextWithDefault("show_debug_engines", "Show Debug Engines"))
+                        description: (backend.uiTrigger, backend.getTextWithDefault("show_debug_engines_desc", ""))
+                        checked: settingsBackend.getShowDebugEngines()
+                        onToggled: (isChecked) => settingsBackend.setShowDebugEngines(isChecked)
+                    }
+
+                    DescriptiveCheck {
+                        label: (backend.uiTrigger, backend.getTextWithDefault("auto_hook_gen", "Auto-Generate Hook After Translation"))
+                        description: (backend.uiTrigger, backend.getTextWithDefault("auto_hook_gen_desc", ""))
+                        checked: settingsBackend.getAutoHook()
+                        onToggled: (isChecked) => settingsBackend.setAutoHook(isChecked)
+                    }
+
+                    DescriptiveCheck { 
+                        label: (backend.uiTrigger, backend.getTextWithDefault("auto_unren", "Automatic RPA Extraction"))
+                        description: (backend.uiTrigger, backend.getTextWithDefault("auto_unren_desc", ""))
+                        checked: settingsBackend.getAutoUnren()
+                        onToggled: (isChecked) => settingsBackend.setAutoUnren(isChecked)
+                    }
+
+                    DescriptiveCheck {
+                        label: (backend.uiTrigger, backend.getTextWithDefault("auto_protect_char_names", "Auto-Protect Character Names"))
+                        description: (backend.uiTrigger, backend.getTextWithDefault("auto_protect_char_names_desc", "Automatically protect character names from translation"))
+                        checked: settingsBackend.getAutoProtectCharNames()
+                        onToggled: (isChecked) => settingsBackend.setAutoProtectCharNames(isChecked)
+                    }
+
+                    // External Translation Memory (v2.7.3)
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: root.separatorColor
+                    }
+
+                    DescriptiveCheck {
+                        label: (backend.uiTrigger, backend.getTextWithDefault("use_external_tm", "External Translation Memory"))
+                        description: (backend.uiTrigger, backend.getTextWithDefault("use_external_tm_desc", "Use imported Translation Memory from other projects to skip API calls for matching texts."))
+                        checked: (backend.uiTrigger, backend.getUseExternalTM())
+                        onToggled: (isChecked) => backend.setUseExternalTM(isChecked)
+                    }
+
+                    // Custom Function Params (JSON)
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+                        Label {
+                            text: (backend.uiTrigger, backend.getTextWithDefault("custom_function_params_label", "Custom Function Params (JSON):"))
+                            color: "#ccc"
+                            font.bold: true
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                        }
+                        Label {
+                            text: (backend.uiTrigger, backend.getTextWithDefault("custom_function_params_desc", "Define which custom Ren'Py functions should have their text parameters extracted for translation."))
+                            color: root.secondaryTextColor
+                            font.pixelSize: 12
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                        }
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: Math.max(80, customFuncArea.contentHeight + 24)
+                            color: root.inputBackground
+                            radius: 8
+                            border.color: root.borderColor
+                            border.width: 1
+                            ScrollView {
+                                anchors.fill: parent
+                                clip: true
+                                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                                TextArea {
+                                    id: customFuncArea
+                                    text: settingsBackend.getCustomFunctionParams()
+                                    placeholderText: '{"MyFunc": {"pos": [0, 1]}, "notify": {"pos": [0]}}'
+                                    color: root.mainTextColor
+                                    font.pixelSize: 13
+                                    font.family: "Consolas"
+                                    wrapMode: TextEdit.Wrap
+                                    leftPadding: 12; rightPadding: 12; topPadding: 12; bottomPadding: 12
+                                    selectByMouse: true
+                                    background: null
+                                    onEditingFinished: settingsBackend.setCustomFunctionParams(text)
                                     placeholderTextColor: Qt.rgba(root.mainTextColor.r, root.mainTextColor.g, root.mainTextColor.b, 0.35)
                                 }
                             }

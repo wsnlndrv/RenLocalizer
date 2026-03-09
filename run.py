@@ -388,7 +388,6 @@ def main() -> int:
                     """Apply icon via Win32 API after HWND is fully initialized."""
                     try:
                         import ctypes
-                        from ctypes import wintypes
                         
                         user32 = ctypes.windll.user32
                         WM_SETICON = 0x80
@@ -422,9 +421,19 @@ def main() -> int:
                 # Apply immediately after show
                 _apply_native_icon()
                 
-                # Insurance: reapply after 150ms in case QML recreates the window handle
+                # Insurance: reapply with escalating delays in case QML recreates the window handle
+                # First retry after 200ms, second after 500ms (covers slow systems & QML layout passes)
                 from PyQt6.QtCore import QTimer
-                QTimer.singleShot(150, _apply_native_icon)
+                QTimer.singleShot(200, _apply_native_icon)
+                QTimer.singleShot(500, _apply_native_icon)
+            
+            # Re-apply Qt icon after QML finishes initialization (cross-platform)
+            if not app_icon.isNull():
+                from PyQt6.QtCore import QTimer
+                def _reapply_qt_icon():
+                    root_window.setIcon(app_icon)
+                    app.setWindowIcon(app_icon)
+                QTimer.singleShot(100, _reapply_qt_icon)
             
             # Process events to flush all icon changes
             app.processEvents()

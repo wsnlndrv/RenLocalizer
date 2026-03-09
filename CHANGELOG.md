@@ -1,7 +1,52 @@
 ﻿# RenLocalizer Changelog
 
-## [2.7.2] - 2026-03-04
+## [2.7.3] - 2026-03-08
 
+### New Feature: Yandex Translate Engine
+- **8th Translation Engine:** Yandex Translate added as a free, API-key-free engine with native batch support. Uses the Widget API endpoint (GET) with automatic SID management (12-hour cache, auto-refresh via asyncio.Lock).
+- **Native Batch Translation (GET):** Multiple `&text=` parameters in a single GET request — URL-length-aware slicing (6000 char limit) with automatic chunk splitting for large batches.
+- **HTML Placeholder Protection:** Ren'Py syntax tokens wrapped in `<span translate="no">` for Widget API (`format=html`), ensuring placeholder integrity through translation.
+- **2-Layer Fallback with Smart Retry:** Widget API → SID refresh + retry (handles partial failures) → Google Translate. Ensures translation continuity even under rate-limiting or SID expiry.
+- **100+ Languages:** Including strong CIS language support (Russian, Tatar, Bashkir, Kazakh, Ukrainian, Uzbek) where Yandex excels over other free engines.
+- **Full Integration:** GUI engine selector (Home + TL Translate dialog), CLI `--engine yandex`, all 8 locale files, pipeline lazy-init with keyword-argument construction ensuring correct `proxy_manager`/`config_manager` inheritance.
+
+### Improvements: LibreTranslate Protection & Stability
+- **Enhanced Placeholder Protection:** Overhauled the `Syntax Guard` engine for LibreTranslate and Local LLM (Ollama) — broken/spaced tokens (e.g., `[ RLPH 0 ]`) are now correctly recovered.
+- **Rate Limit Handling:** 3-tier exponential backoff (2s→4s→8s) for `429 Too Many Requests`, randomized User-Agent rotation, and smart proxy isolation (local instances bypass proxy).
+- **Humanized Error Messages:** Connection errors now show clear, actionable guidance (e.g., "start your local LibreTranslate" or "switch to Cloud endpoint") instead of raw tracebacks.
+
+### UI/UX Revamp
+- **Settings Page Redesign:** Reorganized into 6 logical tiers (General → Engines & APIs → Filters → Network → AI Tuning → System). Removed legacy "Google API Key" field. New group headers localized in all 8 languages.
+- **TL Folder Translation Dialog — Full Feature Parity:** Added engine selector (all 8 engines), source language selector, and proxy toggle. Previously these were hardcoded to Google/auto/off — now fully configurable, matching the main translation flow.
+
+### Localization: Full Native Translation Coverage
+- **~1,157 Translations Applied:** Completed all missing translations across 6 locale files (`de`, `es`, `fr`, `ru`, `fa`, `zh-CN`). French and Chinese were essentially untranslated (~330+ keys each); German (104), Spanish (97), Russian (35), and Persian (20) gaps also filled.
+- **27 Missing Keys Injected:** Keys present in `en.json` but absent from all other locales (settings headers, button labels) added and translated.
+
+### New Feature: External Translation Memory (TM)
+- **Cross-Project Translation Reuse:** Import translations from another game's `tl/<language>/` folder and reuse them as Translation Memory. Matching texts are resolved instantly from TM without API calls — reducing cost and increasing speed.
+- **Smart Import Pipeline:** New `ExternalTMStore` module with 6-layer filtering (empty, same, short, technical, duplicate, 100K limit). TM entries stored per-source (e.g., `tm/GameA_turkish.json`) with granular source selection.
+- **Full UI Integration:** TM Import dialog in Tools page (source name, folder picker, language, source list with delete). TM source checkboxes on Home page. Global toggle in Settings.
+- **Pipeline Integration:** Exact-match TM lookup runs before each API request — TM hits skip the translation engine entirely. Results tracked in diagnostic reports.
+- **33 Unit Tests** covering import pipeline, store operations, config validation, and edge cases.
+
+### Fixed: TM Bugs & Data Integrity
+- **Pipeline Index Alignment:** TM-resolved entries were being re-sent to the translation API, causing results to shift to wrong entries. Fixed with `_tm_resolved_indices` tracking set.
+- **Atomic File Write & Thread Safety:** TM save now uses atomic write (`tempfile` + `os.replace()`). All store operations synchronized with `threading.Lock()`.
+- **Config Validation:** `external_tm_sources` now validates each array element is a string, preventing `TypeError` crashes.
+
+### Fixed: File Path Translation Defense
+- **Expanded Asset Filtering:** Path prefix checks now case-insensitive (fixes Linux mixed-case like `Images/` vs `images/`). Added 8 new folder prefixes (`video/`, `sfx/`, `bgm/`, `cg/`, etc.) and 10 missing file extensions (`.mp4`, `.webm`, `.flac`, etc.) across all filtering layers.
+
+### Fixed: Application Icon
+- **Icon Optimization:** Reduced `icon.ico` from 1.5 MB → 71 KB (multi-resolution 16–256px), new `icon.png` 44 KB for Linux/macOS.
+- **First-Launch Persistence:** Escalating retry timers (200ms + 500ms) and cross-platform Qt icon re-application ensure the icon appears reliably on first launch.
+
+### Fixed: Engine Selection & Configuration
+- **Engine Selection Not Persisted:** The `selected_engine` value was stored as a runtime attribute but was missing from the `TranslationSettings` dataclass. Since `asdict()` only serializes dataclass fields, the user's engine choice was silently lost on every app restart — always reverting to Google. Fixed by adding `selected_engine: str` as a proper dataclass field with `__post_init__` validation against the full engine whitelist.
+- **Yandex Engine Mapping Missing:** `_get_engine_enum()` lacked a `"yandex"` entry in its string→enum mapping, causing Yandex selection in the UI to silently fall back to Google Translate. Users saw "Google Multi-Q" and "Lingva fallback" in logs despite having selected Yandex. Fixed by adding the mapping entry.
+
+## [2.7.2] - 2026-03-04
 ### New Feature: Local & Self-hosted Machine Translation
 - **LibreTranslate Integration**: Added full native support for **LibreTranslate**, enabling 100% offline, privacy-friendly translations via local or self-hosted instances.
 - **File-by-File Translation Generation**: Extracted strings now mirror the original project structure. Instead of a single `strings.rpy`, RenLocalizer creates separate files (e.g. `script.rpy`, `options.rpy`) in the `tl/` folder, ensuring better organization and Ren'Py compatibility.

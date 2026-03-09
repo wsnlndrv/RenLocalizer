@@ -152,6 +152,15 @@ Rectangle {
                     btnText: (backend.uiTrigger, backend.getTextWithDefault("btn_pack", "Pack"))
                     onClicked: backend.packRPA()
                 }
+
+                // --- Harici Çeviri Belleği (TM) ---
+                ToolCard {
+                    title: "🧠 " + (backend.uiTrigger, backend.getTextWithDefault("tm_import_title", "External Translation Memory"))
+                    desc: (backend.uiTrigger, backend.getTextWithDefault("tm_import_desc", "Import translations from another game's tl/ folder to reuse as Translation Memory."))
+                    icon: "📚"
+                    btnText: (backend.uiTrigger, backend.getTextWithDefault("btn_import", "Import"))
+                    onClicked: tmImportDialog.open()
+                }
             }
         }
     }
@@ -205,7 +214,7 @@ Rectangle {
         title: (backend.uiTrigger, backend.getTextWithDefault("tl_dialog_title", "TL Translation"))
         anchors.centerIn: parent
         modal: true
-        width: 450
+        width: 520
         
         background: Rectangle { color: root.cardBackground; radius: 12; border.color: root.borderColor }
         header: Label { text: (backend.uiTrigger, backend.getTextWithDefault("tl_dialog_header", "📂 TL Folder Translation")); padding: 20; font.bold: true; color: root.mainTextColor; font.pixelSize: 18 }
@@ -219,14 +228,63 @@ Rectangle {
                 Button { text: "📁"; onClicked: tlPathDialog.open() }
             }
             
+            // Kaynak Dil
             RowLayout {
-                Label { text: (backend.uiTrigger, backend.getTextWithDefault("target_lang_label", "Target Language:")); color: root.secondaryTextColor; Layout.preferredWidth: 100 }
+                Label { text: (backend.uiTrigger, backend.getTextWithDefault("source_lang_label", "Source Language:")); color: root.secondaryTextColor; Layout.preferredWidth: 130 }
+                ComboBox {
+                    id: tlSourceCombo
+                    Layout.fillWidth: true
+                    model: backend.getSourceLanguages()
+                    textRole: "name"
+                    valueRole: "code"
+                    currentIndex: 0
+                    Component.onCompleted: {
+                        var idx = indexOfValue(backend.getSourceLanguage())
+                        if (idx >= 0) currentIndex = idx
+                    }
+                }
+            }
+
+            // Hedef Dil
+            RowLayout {
+                Label { text: (backend.uiTrigger, backend.getTextWithDefault("target_lang_label", "Target Language:")); color: root.secondaryTextColor; Layout.preferredWidth: 130 }
                 ComboBox {
                     id: tlTargetCombo
                     Layout.fillWidth: true
                     model: backend.getTargetLanguages()
                     textRole: "name"
                     valueRole: "code"
+                    Component.onCompleted: {
+                        var idx = indexOfValue(backend.getTargetLanguage())
+                        if (idx >= 0) currentIndex = idx
+                    }
+                }
+            }
+
+            // Çeviri Motoru
+            RowLayout {
+                Label { text: (backend.uiTrigger, backend.getTextWithDefault("translation_engine_label", "Translation Engine:")); color: root.secondaryTextColor; Layout.preferredWidth: 130 }
+                ComboBox {
+                    id: tlEngineCombo
+                    Layout.fillWidth: true
+                    model: backend.getAvailableEngines()
+                    textRole: "name"
+                    valueRole: "code"
+                    Component.onCompleted: {
+                        var idx = indexOfValue(backend.selectedEngine)
+                        if (idx >= 0) currentIndex = idx
+                    }
+                }
+            }
+
+            // Proxy
+            RowLayout {
+                spacing: 10
+                CheckBox {
+                    id: tlProxyCheck
+                    text: (backend.uiTrigger, backend.getTextWithDefault("proxy_enabled", "Use Proxy"))
+                    checked: settingsBackend.getProxyEnabled()
+                    Material.accent: root.Material.accent
                 }
             }
         }
@@ -236,7 +294,7 @@ Rectangle {
             Button { text: (backend.uiTrigger, backend.getTextWithDefault("btn_cancel", "Cancel")); DialogButtonBox.buttonRole: DialogButtonBox.RejectRole; flat: true }
             Button { 
                 text: (backend.uiTrigger, backend.getTextWithDefault("start_translation", "Start Translation")); DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole; highlighted: true
-                onClicked: backend.startTLTranslation(tlPathField.text, tlTargetCombo.currentValue, "auto", "google", false)
+                onClicked: backend.startTLTranslation(tlPathField.text, tlTargetCombo.currentValue, tlSourceCombo.currentValue, tlEngineCombo.currentValue, tlProxyCheck.checked)
             }
         }
     }
@@ -246,6 +304,147 @@ Rectangle {
         title: (backend.uiTrigger, backend.getTextWithDefault("select_tl_folder_title", "Select TL Folder"))
         currentFolder: "file:///" + backend.get_app_path()
         onAccepted: tlPathField.text = selectedFolder.toString().replace("file:///", "")
+    }
+
+    // ==================== TM Import Dialog ====================
+    Dialog {
+        id: tmImportDialog
+        title: (backend.uiTrigger, backend.getTextWithDefault("tm_import_title", "External Translation Memory"))
+        anchors.centerIn: parent
+        modal: true
+        width: 480
+
+        background: Rectangle { color: root.cardBackground; radius: 12; border.color: root.borderColor }
+        header: Label { text: "🧠 " + (backend.uiTrigger, backend.getTextWithDefault("tm_import_title", "External Translation Memory")); padding: 20; font.bold: true; color: root.mainTextColor; font.pixelSize: 18 }
+
+        contentItem: ColumnLayout {
+            spacing: 15
+
+            Label {
+                text: (backend.uiTrigger, backend.getTextWithDefault("tm_import_instruction", "Select a tl/<language> folder from another Ren'Py game to import as Translation Memory:"))
+                color: root.secondaryTextColor
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
+
+            // Kaynak Adı
+            RowLayout {
+                Label { text: (backend.uiTrigger, backend.getTextWithDefault("tm_source_name_label", "Source Name:")); color: root.secondaryTextColor; Layout.preferredWidth: 100 }
+                TextField {
+                    id: tmSourceNameField
+                    Layout.fillWidth: true
+                    placeholderText: (backend.uiTrigger, backend.getTextWithDefault("tm_source_name_placeholder", "e.g. GameA, MyOtherProject"))
+                    color: root.mainTextColor
+                    background: Rectangle { color: root.inputBackground; border.color: root.borderColor; radius: 6 }
+                }
+            }
+
+            // Klasör Seçimi
+            RowLayout {
+                TextField {
+                    id: tmPathField
+                    Layout.fillWidth: true
+                    placeholderText: (backend.uiTrigger, backend.getTextWithDefault("path_not_selected_placeholder", "Path not selected..."))
+                    color: root.mainTextColor
+                    background: Rectangle { color: root.inputBackground; border.color: root.borderColor; radius: 6 }
+                }
+                Button { text: "📁"; onClicked: tmFolderDialog.open() }
+            }
+
+            // Dil Seçimi
+            RowLayout {
+                Label { text: (backend.uiTrigger, backend.getTextWithDefault("target_lang_label", "Target Language:")); color: root.secondaryTextColor; Layout.preferredWidth: 100 }
+                ComboBox {
+                    id: tmLangCombo
+                    Layout.fillWidth: true
+                    model: backend.getTargetLanguages()
+                    textRole: "name"
+                    valueRole: "code"
+                }
+            }
+
+            // TM Kaynak Listesi
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(tmSourcesCol.height + 20, 200)
+                radius: 8
+                color: root.inputBackground
+                border.color: root.borderColor
+                visible: tmSourcesRepeater.count > 0
+
+                ScrollView {
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    clip: true
+
+                    ColumnLayout {
+                        id: tmSourcesCol
+                        width: parent.width
+                        spacing: 6
+
+                        Label {
+                            text: (backend.uiTrigger, backend.getTextWithDefault("tm_existing_sources", "Existing TM Sources:"))
+                            font.bold: true
+                            color: root.mainTextColor
+                            font.pixelSize: 13
+                        }
+
+                        Repeater {
+                            id: tmSourcesRepeater
+                            model: tmImportDialog.visible ? backend.getAvailableTMSources() : []
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                Label {
+                                    text: "📚 " + modelData.name + " (" + modelData.language + ") — " + modelData.entry_count + " entries"
+                                    color: root.secondaryTextColor
+                                    font.pixelSize: 12
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+                                Button {
+                                    text: "🗑️"
+                                    flat: true
+                                    implicitWidth: 32
+                                    implicitHeight: 28
+                                    onClicked: {
+                                        backend.deleteTMSource(modelData.file_path)
+                                        tmSourcesRepeater.model = backend.getAvailableTMSources()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        footer: DialogButtonBox {
+            background: Rectangle { color: "transparent" }
+            Button {
+                text: (backend.uiTrigger, backend.getTextWithDefault("btn_cancel", "Cancel"))
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+                flat: true
+            }
+            Button {
+                text: (backend.uiTrigger, backend.getTextWithDefault("tm_btn_import", "Import TM"))
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+                highlighted: true
+                enabled: tmPathField.text.length > 0
+                onClicked: {
+                    backend.importExternalTM(tmPathField.text, tmSourceNameField.text, tmLangCombo.currentValue)
+                    tmImportDialog.close()
+                }
+            }
+        }
+    }
+
+    FolderDialog {
+        id: tmFolderDialog
+        title: (backend.uiTrigger, backend.getTextWithDefault("tm_select_folder_title", "Select tl/<language> Folder"))
+        currentFolder: "file:///" + backend.get_app_path()
+        onAccepted: tmPathField.text = selectedFolder.toString().replace("file:///", "")
     }
 
     component ToolCard: Rectangle {

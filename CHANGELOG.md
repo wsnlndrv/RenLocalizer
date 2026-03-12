@@ -1,4 +1,36 @@
-﻿# RenLocalizer Changelog
+# RenLocalizer Changelog
+
+### [2.7.4] - 2026-03-12
+
+### 🌟 New: Smart Data Path & Portable Mode
+- **System Mode (Default):** User data (Config, TM Cache, Glossary, Logs, External TM) is now safely stored in OS-standard directories (`AppData\Roaming` on Windows, `~/.local/share` on Linux, `~/Library/Application Support` on macOS) to prevent write-permission errors when installed in protected folders.
+- **Portable Mode Fallback:** If the app detects an existing `config.json` next to the executable (legacy behavior), it activates **Portable Mode** seamlessly to preserve existing user setups.
+- **UI Management:** Added a dedicated toggle in Settings to instantly switch between Portable and System modes, including an "Open Data Folder" button for easy access.
+- **Full Data Integrity Migration:** Replaced data copying with a secure **Atomic Move** operation. Switching between Portable and System modes now performs a complete transfer of `cache/`, `tm/`, and `glossary.json`, automatically cleaning up the source directory to prevent data duplication and clutter.
+- **Dynamic TM Resolution:** Re-engineered `ExternalTMStore` to dynamically resolve paths based on the active data directory, ensuring all pre-imported archives remain accessible in both Portable and System environments.
+- **Pipeline Synchronization:** Unified all path calculations in `translation_pipeline.py` and `app_backend.py` to use the centralized `data_dir`. This ensures even background tasks strictly respect the active Portable/System mode selection.
+
+### 🐧 Linux: AppImage & Runtime Reliability
+- **Startup Crash & Icon Fixes:** Implemented read-only filesystem fallbacks (logs redirect to `/tmp`) and bundled `NotoColorEmoji.ttf` to natively fix missing emoji icons across all Linux environments.
+- **Improved Compatibility:** Switched build base to Ubuntu 20.04 to ensure maximum `glibc` backward compatibility across older and newer distros.
+
+### 🔍 Core parsing & Fixes
+- **Disk Optimization & Cleanup:**
+    - Disabled automatic `.rpy.bak` creation during source translatable phase to reduce file clutter and disk I/O.
+    - Added automatic `.rpa` archive deletion after successful extraction to save multiple gigabytes of disk space and prevent Ren'Py archive priority conflicts. Orijinal archives can still be recovered from the source ZIP/RAR or Steam.
+    - Using safe atomic writes for source file modification to ensure data integrity without redundant backups.
+- **Translation Filter Enforcement:** Resolved major Pyparsing & RPYC issues where translation filters ("Dialogue Only" etc.) were bypassed. All extraction paths strictly adhere to user settings.
+- **Extended Extraction Coverage:** Added detection for 15+ missing text-type structures and smart context routing for UI vs Dialogue elements, guaranteeing near 100% translatable text extraction.
+- **Screen & Tag Translation:** Overhauled `_make_source_translatable()`. The pipeline now correctly identifies formatted UI texts (with Ren'Py tags like `{b}`) and complex `textbutton` layouts which were previously skipped. Lookaheads replaced fragile keyword dependencies.
+
+### 🤖 AI Engines & Protection
+- **LibreTranslate Hardening:** Migrated to strict HTML protection (`<span translate="no">`) preventing placeholder mutation during inference.
+- **Placeholder Entity Guard:** Fixed a critical API bug where HTML entities (`&amp;lt;`) got stuck in a double-escaped loop on Yandex and LibreTranslate, causing math operations (`<`, `>`) to fail in output strings. reversed the decode order.
+
+### 🖥️ UI/UX & Quality of Life
+- **Unified Engine Settings:** AI & LLM tuning parameters (Batch size, Token boundaries, Concurrency limits) are now grouped logically into the UI, restoring custom LLM batch overrides.
+- **DPI & Window Scaling:** Windows 125%-200% scale handling rewritten with pure Qt6 + Manifest flow to cure the infamous "White Screen of Death" bug on startup. Added `Copy Log` context actions.
+- **Glossary Validation:** Fixed an `IndexError` crash caused by empty JSON objects returned by Google's auto-translate API during glossary generation.
 
 ## [2.7.3] - 2026-03-08
 

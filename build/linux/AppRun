@@ -12,8 +12,25 @@ export LD_LIBRARY_PATH="${APPDIR}/usr/bin/RenLocalizer:${LD_LIBRARY_PATH}"
 export QT_PLUGIN_PATH="${APPDIR}/usr/bin/RenLocalizer/PyQt6/Qt6/plugins"
 export QML2_IMPORT_PATH="${APPDIR}/usr/bin/RenLocalizer/PyQt6/Qt6/qml"
 
+# Force X11 backend if Wayland causes issues (common in AppImages)
+# export QT_QPA_PLATFORM=xcb
+
 # Ensure XDG paths are sane
 export XDG_DATA_DIRS="${APPDIR}/usr/share:${XDG_DATA_DIRS:-/usr/share}"
+
+# ── Font configuration ──────────────────────────────────────
+# Make bundled emoji font (NotoColorEmoji.ttf) discoverable by fontconfig.
+# This ensures emoji UI icons render correctly even on minimal distros
+# that lack a color emoji font package.
+BUNDLED_FONTS="${APPDIR}/usr/bin/RenLocalizer/fonts"
+if [ -d "${BUNDLED_FONTS}" ]; then
+    # Patch the fontconfig snippet with the real AppDir fonts path
+    FONTCONF="${APPDIR}/usr/bin/RenLocalizer/fontconfig/fonts.conf"
+    if [ -f "${FONTCONF}" ]; then
+        sed -i "s|APPDIR_FONTS|${BUNDLED_FONTS}|g" "${FONTCONF}" 2>/dev/null || true
+        export FONTCONFIG_FILE="${FONTCONF}"
+    fi
+fi
 
 # Launch the application
 # Pass all command-line arguments through

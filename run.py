@@ -63,6 +63,23 @@ os.environ["QT_QUICK_CONTROLS_MATERIAL_THEME"] = _get_configured_theme()
 os.environ["QT_QUICK_CONTROLS_MATERIAL_ACCENT"] = "Purple"
 
 # ============================================================
+# CRITICAL: High DPI support — MUST be set before any Qt imports
+# Fixes blank/invisible window at 125%, 150%, 200% display scaling
+# ============================================================
+if sys.platform == "win32" and os.environ.get("RENLOCALIZER_FORCE_DPI_API", "0") == "1":
+    try:
+        import ctypes
+        # Per-Monitor DPI Aware V2 — let Qt6 handle scaling natively
+        # Without this, Windows DPI virtualization conflicts with Qt's own scaling
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            # Fallback for older Windows (8.0 and below)
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+# ============================================================
 # CRITICAL: Set AppUserModelId for Windows taskbar icon
 # This MUST be done early, before any Qt/GUI initialization
 # ============================================================
@@ -295,10 +312,36 @@ def main() -> int:
         from PyQt6.QtWidgets import QApplication
         from PyQt6.QtQml import QQmlApplicationEngine
 
+        # High DPI: Use PassThrough rounding so 150%/200% scales are not
+        # rounded to integer multiples, preventing layout overflow and blank windows
+        QApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )
+
         # Use QApplication for better desktop integration (Icons, Taskbar, etc.)
         app = QApplication(sys.argv)
         app.setApplicationName("RenLocalizer")
         app.setOrganizationName("LordOfTurk")
+
+        # ── Linux emoji font registration ────────────────────────
+        # Bundle carries NotoColorEmoji.ttf in fonts/ directory.
+        # Register it via QFontDatabase so Qt can render emoji icons
+        # (navigation bar, tools page, toast notifications) on distros
+        # that lack a system color emoji font.
+        if sys.platform != "win32":
+            from PyQt6.QtGui import QFontDatabase
+            _font_dirs = [
+                Path(resolve_asset_path("fonts")),  # PyInstaller _MEIPASS/fonts
+            ]
+            for _fd in _font_dirs:
+                if _fd.is_dir():
+                    for _ff in _fd.iterdir():
+                        if _ff.suffix.lower() in (".ttf", ".otf"):
+                            fid = QFontDatabase.addApplicationFont(str(_ff))
+                            if fid >= 0:
+                                logger.debug(f"Registered bundled font: {_ff.name}")
+                            else:
+                                logger.warning(f"Failed to register font: {_ff.name}")
         
         # Import Backends (Logic)
         from src.utils.config import ConfigManager

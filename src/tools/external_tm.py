@@ -128,11 +128,18 @@ class ExternalTMStore:
     def __init__(self, tm_dir: str = "tm"):
         """
         Args:
-            tm_dir: TM dosyalarının saklanacağı dizin (program köküne göre)
+            tm_dir: TM dosyalarının saklanacağı dizin.
+                    Mutlak yol değilse, program köküne göre çözümlenir.
         """
-        # Program kökünü bul
-        self._app_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self.tm_dir = os.path.join(self._app_dir, tm_dir)
+        if os.path.isabs(tm_dir):
+            self.tm_dir = tm_dir
+        else:
+            # Fallback to program root if not absolute
+            self._app_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            self.tm_dir = os.path.join(self._app_dir, tm_dir)
+        
+        # Base directory for relative lookups (usually parent of tm_dir)
+        self.base_dir = os.path.dirname(self.tm_dir)
         
         # Aktif TM verileri: {original_text: translated_text}
         self._entries: Dict[str, str] = {}
@@ -327,7 +334,7 @@ class ExternalTMStore:
         for path in source_paths:
             # Göreceli yolları mutlak yola çevir
             if not os.path.isabs(path):
-                path = os.path.join(self._app_dir, path)
+                path = os.path.join(self.base_dir, path)
             
             if not os.path.isfile(path):
                 logger.warning(f"TM dosyası bulunamadı: {path}")

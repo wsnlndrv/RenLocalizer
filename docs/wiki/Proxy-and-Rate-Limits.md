@@ -1,4 +1,4 @@
-# 🌐 Proxy Management & Rate Limits (2.7.1)
+# 🌐 Proxy Management & Rate Limits (2.7.3)
 
 This page is the canonical place for proxy and rate-limit behavior in RenLocalizer.
 
@@ -16,7 +16,7 @@ This is why endpoint switching alone may not fully solve heavy throttling window
 
 ---
 
-## ⚡ 2.7.1 Rate-Limit Protection
+## ⚡ 2.7.1+ Rate-Limit Protection
 
 RenLocalizer now applies a global cooldown and safer pacing to reduce ban cascades:
 
@@ -24,6 +24,11 @@ RenLocalizer now applies a global cooldown and safer pacing to reduce ban cascad
 - **Health-aware endpoint selection:** unhealthy mirrors are deprioritized/temporarily banned
 - **Request jitter + pacing:** avoids synchronized bursts
 - **Lower risky parallelism:** helps stability under heavy load
+
+### v2.7.3 Enhancements
+- **Smart Proxy Isolation:** Proxy rotation is now intelligently disabled for local instances (`localhost`, `127.0.0.1`). Only public endpoint traffic routes through configured proxies.
+- **User-Agent Rotation (LibreTranslate):** Randomized browser User-Agent spoofing for public LibreTranslate endpoints minimizes rate-limit blocks and IP bans.
+- **Exponential Backoff (LibreTranslate):** 3-tier retry logic (2s, 4s, 8s) automatically handles `429 Too Many Requests` for LibreTranslate.
 
 Result: fewer cascade bans and more stable long runs.
 
@@ -35,7 +40,7 @@ Result: fewer cascade bans and more stable long runs.
 
 ---
 
-## 🛠️ Proxy Behavior in 2.7.1
+## 🛠️ Proxy Behavior in 2.7.1+
 
 ### Priority logic (important)
 
@@ -122,3 +127,4 @@ Treat free proxy mode as emergency fallback, not as a high-reliability productio
 ## 🔗 Related
 
 - [[Performance-Optimization]]
+- [[External-Translation-Memory]] — TM matches skip API entirely, reducing proxy/rate-limit pressure

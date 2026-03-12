@@ -87,6 +87,48 @@ Rectangle {
                             border.color: root.borderColor
                         }
                     }
+
+                    // --- PORTABLE MODE AYARLARI ---
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: root.borderColor
+                        Layout.topMargin: 8
+                        Layout.bottomMargin: 8
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+                        
+                        CheckBox {
+                            checked: settingsBackend.getPortableMode()
+                            enabled: settingsBackend.isPortableModeSupported()
+                            opacity: enabled ? 1.0 : 0.5
+                            onCheckedChanged: {
+                                if (checked !== settingsBackend.getPortableMode()) {
+                                    var success = settingsBackend.setPortableMode(checked)
+                                    if (!success) {
+                                        checked = !checked // Revert if failed
+                                    }
+                                }
+                            }
+                            text: (backend.uiTrigger, backend.getTextWithDefault("portable_mode_toggle", "Portable Mode (Save data next to exe)"))
+                        }
+                        
+                        Item { Layout.fillWidth: true } // Spacer
+                        
+                        Button {
+                            text: "📁 " + (backend.uiTrigger, backend.getTextWithDefault("open_data_folder_btn", "Open Data Folder"))
+                            onClicked: settingsBackend.openDataFolder()
+                            font.pixelSize: 13
+                            background: Rectangle {
+                                radius: 8
+                                color: parent.down ? Qt.darker(root.inputBackground, 1.2) : parent.hovered ? Qt.darker(root.inputBackground, 1.1) : root.inputBackground
+                                border.color: root.borderColor
+                            }
+                        }
+                    }
                 }
             }
 

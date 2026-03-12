@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot, pyqtProperty, QUrl, QThread
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QDesktopServices, QGuiApplication
 
 from src.utils.config import ConfigManager
 from src.version import VERSION
@@ -300,6 +300,14 @@ class AppBackend(QObject):
     def openUrl(self, url: str):
         """Harici URL aç."""
         QDesktopServices.openUrl(QUrl(url))
+
+    @pyqtSlot(str, result=bool)
+    def copyTextToClipboard(self, text: str) -> bool:
+        try:
+            QGuiApplication.clipboard().setText(text or "")
+            return True
+        except Exception:
+            return False
 
     @pyqtSlot(str, result=str)
     def extractRPA(self, path: str) -> str:
@@ -824,8 +832,10 @@ class AppBackend(QObject):
                     }
                     data = requests.get(url, params=params, timeout=5).json()
                     if data and isinstance(data, list) and len(data) > 0:
-                        self.config.glossary[key] = data[0][0][0]
-                        count += 1
+                        first = data[0]
+                        if isinstance(first, list) and len(first) > 0 and isinstance(first[0], list) and len(first[0]) > 0:
+                            self.config.glossary[key] = first[0][0]
+                            count += 1
                 except Exception:
                     pass
             
@@ -1355,10 +1365,7 @@ class AppBackend(QObject):
             
             if should_use_global_cache:
                 project_name = os.path.basename(project_dir.rstrip('/\\')) or "default_project"
-                app_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-                if getattr(sys, 'frozen', False):
-                    app_dir = os.path.dirname(sys.executable)
-                base_cache_dir = os.path.join(app_dir, getattr(self.config.translation_settings, 'cache_path', 'cache'))
+                base_cache_dir = os.path.join(self.config.data_dir, getattr(self.config.translation_settings, 'cache_path', 'cache'))
                 cache_dir = os.path.join(base_cache_dir, project_name, self._target_language)
             else:
                 cache_dir = os.path.join(project_dir, 'game', 'tl', self._target_language)
@@ -1617,7 +1624,8 @@ class AppBackend(QObject):
     def _run_tm_import_thread(self, tl_path: str, source_name: str, language: str):
         try:
             from src.tools.external_tm import ExternalTMStore
-            store = ExternalTMStore()
+            tm_dir = str(os.path.join(self.config.data_dir, "tm"))
+            store = ExternalTMStore(tm_dir=tm_dir)
             result = store.import_from_tl_directory(
                 tl_lang_dir=tl_path,
                 source_name=source_name,
@@ -1658,7 +1666,8 @@ class AppBackend(QObject):
         """tm/ klasöründeki mevcut TM kaynaklarını listele."""
         try:
             from src.tools.external_tm import ExternalTMStore
-            store = ExternalTMStore()
+            tm_dir = str(os.path.join(self.config.data_dir, "tm"))
+            store = ExternalTMStore(tm_dir=tm_dir)
             sources = store.list_available_sources()
             return [s.to_dict() for s in sources]
         except Exception as e:
@@ -1670,7 +1679,8 @@ class AppBackend(QObject):
         """Bir TM kaynağını sil."""
         try:
             from src.tools.external_tm import ExternalTMStore
-            store = ExternalTMStore()
+            tm_dir = str(os.path.join(self.config.data_dir, "tm"))
+            store = ExternalTMStore(tm_dir=tm_dir)
             success = store.delete_source(file_path)
             if success:
                 self.logMessage.emit("info", self.config.get_ui_text(

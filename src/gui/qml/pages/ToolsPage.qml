@@ -171,7 +171,7 @@ Rectangle {
         title: (backend.uiTrigger, backend.getTextWithDefault("font_manual_title", "Manual Font Selection"))
         anchors.centerIn: parent
         modal: true
-        width: 400
+        width: Math.min(400, root.width * 0.85)
         
         background: Rectangle { color: root.cardBackground; radius: 12; border.color: root.borderColor }
         header: Label { text: (backend.uiTrigger, backend.getTextWithDefault("font_manual_title", "Manual Font Selection")); padding: 20; font.bold: true; color: root.mainTextColor; font.pixelSize: 18 }
@@ -214,7 +214,7 @@ Rectangle {
         title: (backend.uiTrigger, backend.getTextWithDefault("tl_dialog_title", "TL Translation"))
         anchors.centerIn: parent
         modal: true
-        width: 520
+        width: Math.min(520, root.width * 0.85)
         
         background: Rectangle { color: root.cardBackground; radius: 12; border.color: root.borderColor }
         header: Label { text: (backend.uiTrigger, backend.getTextWithDefault("tl_dialog_header", "📂 TL Folder Translation")); padding: 20; font.bold: true; color: root.mainTextColor; font.pixelSize: 18 }
@@ -312,7 +312,7 @@ Rectangle {
         title: (backend.uiTrigger, backend.getTextWithDefault("tm_import_title", "External Translation Memory"))
         anchors.centerIn: parent
         modal: true
-        width: 480
+        width: Math.min(480, root.width * 0.85)
 
         background: Rectangle { color: root.cardBackground; radius: 12; border.color: root.borderColor }
         header: Label { text: "🧠 " + (backend.uiTrigger, backend.getTextWithDefault("tm_import_title", "External Translation Memory")); padding: 20; font.bold: true; color: root.mainTextColor; font.pixelSize: 18 }

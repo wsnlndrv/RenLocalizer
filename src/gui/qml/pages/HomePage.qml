@@ -30,6 +30,30 @@ Rectangle {
         logListView.positionViewAtEnd()
     }
 
+    function getLogPrefixText(level) {
+        var trig = backend.uiTrigger
+        if (level === "error") return backend.getTextWithDefault("log_tag_error", "[ERROR]")
+        if (level === "warning") return backend.getTextWithDefault("log_tag_warn", "[WARN]")
+        if (level === "success") return backend.getTextWithDefault("log_tag_ok", "[OK]")
+        if (level === "debug") return backend.getTextWithDefault("log_tag_debug", "[DEBUG]")
+        return backend.getTextWithDefault("log_tag_info", "[INFO]")
+    }
+
+    function copyLogsToClipboard() {
+        if (logModel.count === 0) return
+        var lines = []
+        for (var i = 0; i < logModel.count; i++) {
+            var entry = logModel.get(i)
+            lines.push("[" + entry.timestamp + "] " + getLogPrefixText(entry.level) + " " + entry.message)
+        }
+        var copied = backend.copyTextToClipboard(lines.join("\n"))
+        if (copied) {
+            addLog("success", (backend.uiTrigger, backend.getText("log_copy_success")))
+            return
+        }
+        addLog("error", (backend.uiTrigger, backend.getText("log_copy_failed")))
+    }
+
     function updateProgress(current, total, text) {
         progressBar.value = total > 0 ? current / total : 0
         progressLabel.text = text + ` (${current}/${total})`
@@ -712,6 +736,16 @@ Rectangle {
                         Item { Layout.fillWidth: true }
 
                         Button {
+                            text: "📄"
+                            flat: true
+                            enabled: logModel.count > 0
+                            onClicked: copyLogsToClipboard()
+
+                            ToolTip.visible: hovered
+                            ToolTip.text: (backend.uiTrigger, backend.getText("copy_log"))
+                        }
+
+                        Button {
                             text: "🗑"
                             flat: true
                             onClicked: logModel.clear()
@@ -743,13 +777,7 @@ Rectangle {
                             }
 
                             property string prefixText: {
-                                // Trigger update on language change
-                                var trig = backend.uiTrigger
-                                if (level === "error") return backend.getTextWithDefault("log_tag_error", "[ERROR]")
-                                if (level === "warning") return backend.getTextWithDefault("log_tag_warn", "[WARN]")
-                                if (level === "success") return backend.getTextWithDefault("log_tag_ok", "[OK]")
-                                if (level === "debug") return backend.getTextWithDefault("log_tag_debug", "[DEBUG]")
-                                return backend.getTextWithDefault("log_tag_info", "[INFO]")
+                                return homePage.getLogPrefixText(level)
                             }
 
                             text: `<font color="${colorCode}">[${timestamp}] ${prefixText} ${message}</font>`

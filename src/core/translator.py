@@ -1927,15 +1927,28 @@ class LibreTranslateTranslator(BaseTranslator):
                 protected_text = req.text
             else:
                 protected_text, placeholders = protect_renpy_syntax(req.text)
-                
-            texts_to_translate.append(protected_text)
+            
+            # Wrap placeholder tokens in <span translate="no"> for HTML mode.
+            # LibreTranslate corrupts Unicode brackets ⟦⟧ in plain text mode,
+            # but respects translate="no" spans in HTML mode.
+            #
+            # Escape bare < > & in text BEFORE wrapping spans, so the HTML
+            # parser doesn't misinterpret them (e.g. "5 < 10" → "5 &lt; 10").
+            # Placeholder tokens (⟦…⟧) don't contain these chars so escaping is safe.
+            html_text = protected_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            for ph in sorted(placeholders.keys(), key=len, reverse=True):
+                html_text = html_text.replace(
+                    ph, f'<span translate="no">{ph}</span>'
+                )
+            
+            texts_to_translate.append(html_text)
             all_placeholders.append(placeholders)
 
         payload = {
             "q": texts_to_translate,
             "source": src_lang,
             "target": tgt_lang,
-            "format": "text"
+            "format": "html"
         }
         if self.api_key:
             payload["api_key"] = self.api_key
@@ -2003,6 +2016,21 @@ class LibreTranslateTranslator(BaseTranslator):
                             placeholders = all_placeholders[i]
                             meta = req.metadata if isinstance(req.metadata, dict) else {}
                             orig_text = meta.get('original_text', req.text)
+
+                            # Strip HTML spans we added for placeholder protection
+                            # Handle both quote styles and case variations
+                            translated = re.sub(
+                                r'<span[^>]*translate=["\']no["\'][^>]*>(.*?)</span>',
+                                r'\1',
+                                translated,
+                                flags=re.IGNORECASE | re.DOTALL,
+                            )
+                            # Decode HTML entities that the API may have introduced
+                            # &amp; MUST be decoded first — otherwise &amp;lt; → &lt; (stuck)
+                            translated = (translated
+                                .replace('&amp;', '&').replace('&lt;', '<')
+                                .replace('&gt;', '>').replace('&quot;', '"')
+                                .replace('&#39;', "'"))
 
                             restored = restore_renpy_syntax(translated.strip(), placeholders)
                             missing = validate_translation_integrity(restored, placeholders)
@@ -2275,7 +2303,8 @@ class YandexTranslator(BaseTranslator):
                 protected_text, placeholders = protect_renpy_syntax(req.text)
 
             # Wrap placeholders in translate="no" spans for HTML mode
-            html_text = protected_text
+            # Escape bare < > & first so the HTML parser doesn't misinterpret them
+            html_text = protected_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
             for ph in sorted(placeholders.keys(), key=len, reverse=True):
                 html_text = html_text.replace(
                     ph, f'<span translate="no">{ph}</span>'
@@ -2372,11 +2401,19 @@ class YandexTranslator(BaseTranslator):
                 translated = all_translated[i]
 
                 # Strip HTML spans we added
+                # Handle both quote styles and case variations
                 translated = re.sub(
-                    r'<span[^>]*translate="no"[^>]*>(.*?)</span>',
+                    r'<span[^>]*translate=["\']no["\'][^>]*>(.*?)</span>',
                     r"\1",
                     translated,
+                    flags=re.IGNORECASE | re.DOTALL,
                 )
+                # Decode HTML entities that the API may have introduced
+                # &amp; MUST be decoded first — otherwise &amp;lt; → &lt; (stuck)
+                translated = (translated
+                    .replace('&amp;', '&').replace('&lt;', '<')
+                    .replace('&gt;', '>').replace('&quot;', '"')
+                    .replace('&#39;', "'"))
 
                 placeholders = all_placeholders[i]
                 restored = restore_renpy_syntax(translated.strip(), placeholders)

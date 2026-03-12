@@ -351,7 +351,13 @@ class ConfigManager:
     
     def __init__(self, config_file: str = "config.json"):
         self.logger = logging.getLogger(__name__)
-        self.config_file = Path(config_file)
+        
+        # Determine and initialize the dynamic data path (System vs Portable)
+        from src.utils.path_manager import get_data_path, ensure_data_directories
+        self.data_dir = get_data_path()
+        ensure_data_directories(self.data_dir)
+        
+        self.config_file = self.data_dir / config_file
         self._lock = threading.Lock() # Thread-safety for configuration
         
         # Get the correct locales directory for both dev and executable
@@ -499,9 +505,9 @@ class ConfigManager:
             self._language_data = self._get_fallback_translations()
 
     def _load_json_file(self, filename: str, default):
-        """Load a JSON file from project root; return default on error."""
+        """Load a JSON file from the smart data directory; return default on error."""
         try:
-            path = Path(filename)
+            path = self.data_dir / filename
             if path.exists():
                 with open(path, 'r', encoding='utf-8') as f:
                     return json.load(f)
@@ -630,9 +636,10 @@ class ConfigManager:
         """Save glossary to file."""
         try:
             filename = self.translation_settings.glossary_file
-            with open(filename, 'w', encoding='utf-8') as f:
+            path = self.data_dir / filename
+            with open(path, 'w', encoding='utf-8') as f:
                 json.dump(self.glossary, f, indent=4, ensure_ascii=False)
-            self.logger.info(f"Glossary saved to {filename}")
+            self.logger.info(f"Glossary saved to {path}")
             return True
         except Exception as e:
             self.logger.error(f"Error saving glossary: {e}")

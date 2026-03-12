@@ -138,7 +138,7 @@ class SettingsBackend(QObject):
     
     @pyqtSlot(str)
     def setDeepLApiKey(self, key: str):
-        self.config.api_keys.deepl_api_key = key
+        self.config.api_keys.deepl_api_key = key.strip()
         self.config.save_config()
 
     @pyqtSlot(result=str)
@@ -156,7 +156,7 @@ class SettingsBackend(QObject):
     
     @pyqtSlot(str)
     def setOpenAIApiKey(self, key: str):
-        self.config.api_keys.openai_api_key = key
+        self.config.api_keys.openai_api_key = key.strip()
         self.config.save_config()
     
     @pyqtSlot(result=str)
@@ -165,7 +165,7 @@ class SettingsBackend(QObject):
     
     @pyqtSlot(str)
     def setGeminiApiKey(self, key: str):
-        self.config.api_keys.gemini_api_key = key
+        self.config.api_keys.gemini_api_key = key.strip()
         self.config.save_config()
 
     @pyqtSlot(result=str)
@@ -174,7 +174,7 @@ class SettingsBackend(QObject):
 
     @pyqtSlot(str)
     def setDeepSeekApiKey(self, key: str):
-        self.config.api_keys.deepseek_api_key = key
+        self.config.api_keys.deepseek_api_key = key.strip()
         self.config.save_config()
 
     @pyqtSlot(result=str)
@@ -304,7 +304,7 @@ class SettingsBackend(QObject):
     
     @pyqtSlot(str)
     def setOpenAIBaseUrl(self, url: str):
-        self.config.translation_settings.openai_base_url = url
+        self.config.translation_settings.openai_base_url = url.strip()
         self.config.save_config()
     
     @pyqtSlot(result=str)
@@ -313,7 +313,7 @@ class SettingsBackend(QObject):
     
     @pyqtSlot(str)
     def setGeminiModel(self, model: str):
-        self.config.translation_settings.gemini_model = model
+        self.config.translation_settings.gemini_model = model.strip()
         self.config.save_config()
     
     @pyqtSlot(result=str)
@@ -468,7 +468,7 @@ class SettingsBackend(QObject):
 
     @pyqtSlot(str)
     def setLibreTranslateApiKey(self, key: str):
-        self.config.translation_settings.libretranslate_api_key = key
+        self.config.translation_settings.libretranslate_api_key = key.strip()
         self.config.save_config()
 
     @pyqtSlot(result=str)
@@ -838,3 +838,150 @@ class SettingsBackend(QObject):
         self.config.reset_to_defaults()
         self.config.save_config()
         self.settingsSaved.emit()
+
+    # ==================== PATH & PORTABLE SETTINGS ====================
+
+    @pyqtSlot(result=bool)
+    def isPortableModeSupported(self) -> bool:
+        """Check if Portable Mode is allowed (Not AppImage, directory is writable)."""
+        import os
+        from src.utils.path_manager import is_appimage, get_app_dir
+        
+        if is_appimage():
+            return False
+            
+        app_dir = get_app_dir()
+        return os.access(app_dir, os.W_OK)
+
+    @pyqtSlot(result=bool)
+    def getPortableMode(self) -> bool:
+        """Check if we are currently running in Portable Mode."""
+        import os
+        from src.utils.path_manager import get_data_path, get_app_dir
+        
+        # If the data path matches the app installation dir, it's portable.
+        return get_data_path() == get_app_dir()
+
+    @pyqtSlot(bool, result=bool)
+    def setPortableMode(self, enable: bool) -> bool:
+        """
+        Switch between Portable and System modes. Returns True if successful.
+        If enabling, creates a .portable marker and copies data to app path.
+        If disabling, removes .portable marker and copies data to system path.
+        """
+        import os
+        import shutil
+        from src.utils.path_manager import get_data_path, get_app_dir, get_system_data_dir
+
+        app_dir = get_app_dir()
+        sys_dir = get_system_data_dir()
+        marker = app_dir / ".portable"
+        
+        # Don't do anything if not supported
+        if not self.isPortableModeSupported():
+            return False
+
+        try:
+            if enable:
+                # Enabling portable mode
+                if not os.access(app_dir, os.W_OK):
+                    return False
+                    
+                # Create marker file
+                marker.touch(exist_ok=True)
+                
+                # Update config path ON THE FLY so subsequent saves go to the right place
+                self.config.data_dir = app_dir
+                self.config.config_file = app_dir / "config.json"
+                
+                # Move existing data from System to App directory (except large logs)
+                try:
+                    if sys_dir.exists() and sys_dir != app_dir:
+                        for item in ["cache", "tm", "glossary.json"]:
+                            src = sys_dir / item
+                            dst = app_dir / item
+                            if src.exists() and not dst.exists():
+                                try:
+                                    if src.is_dir():
+                                        shutil.copytree(src, dst)
+                                        shutil.rmtree(src)
+                                    else:
+                                        shutil.copy2(src, dst)
+                                        src.unlink()
+                                except Exception as e:
+                                    logging.getLogger(__name__).warning(f"Failed to move {item} from system to portable: {e}")
+                except Exception:
+                    pass
+                
+                # Explicitly save current config to new location
+                self.config.save_config()
+                
+            else:
+                # Disabling portable mode (Moving to System Mode)
+                if marker.exists():
+                    marker.unlink()
+                
+                # Ensure system directory exists
+                from src.utils.path_manager import ensure_data_directories
+                ensure_data_directories(sys_dir)
+                
+                # Update config paths dynamically
+                self.config.data_dir = sys_dir
+                self.config.config_file = sys_dir / "config.json"
+                
+                # Move existing data from App to System directory
+                try:
+                    if app_dir != sys_dir:
+                        for item in ["cache", "tm", "glossary.json"]:
+                            src = app_dir / item
+                            dst = sys_dir / item
+                            if src.exists() and not dst.exists():
+                                try:
+                                    if src.is_dir():
+                                        shutil.copytree(src, dst)
+                                        shutil.rmtree(src)
+                                    else:
+                                        shutil.copy2(src, dst)
+                                        src.unlink()
+                                except Exception as e:
+                                    logging.getLogger(__name__).warning(f"Failed to move {item} from portable to system: {e}")
+                except Exception:
+                    pass
+                
+                # Save config to the new system location first!
+                self.config.save_config()
+                
+                # Now safely delete config.json from app directory to prevent triggering legacy fallback on next start
+                if (app_dir / "config.json").exists():
+                    try:
+                        (app_dir / "config.json").unlink()
+                    except Exception:
+                        pass
+            
+            return True
+            
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Error toggling portable mode: {e}")
+            return False
+
+    @pyqtSlot()
+    def openDataFolder(self):
+        """Opens the active data folder in the system file explorer."""
+        import os
+        import sys
+        import subprocess
+        from src.utils.path_manager import get_data_path
+        
+        data_path = str(get_data_path())
+        
+        try:
+            if sys.platform == "win32":
+                os.startfile(data_path)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", data_path])
+            else:
+                subprocess.Popen(["xdg-open", data_path])
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Error opening data folder: {e}")

@@ -461,7 +461,8 @@ class TranslationPipeline(QObject):
                      if 'common' in root.replace('\\', '/').split('/'):
                           for f in files:
                                try: os.remove(os.path.join(root, f))
-                               except Exception: pass
+                               except Exception as e:
+                                   self.logger.warning(f"Failed to clean up common file {f}: {e}")
             
             # Tekrar kontrol
             has_rpy = self._has_rpy_files(game_dir)
@@ -550,7 +551,7 @@ class TranslationPipeline(QObject):
         if getattr(self, 'include_deep_scan', False):
             self.log_message.emit("info", self.config.get_log_text('deep_scan_running'))
             try:
-                parser = RenPyParser()
+                parser = RenPyParser(self.config)
                 # Scan source files
                 scan_res = parser.extract_combined(
                     str(game_dir), include_rpy=True, include_rpyc=True, 
@@ -1059,6 +1060,44 @@ class TranslationPipeline(QObject):
                     self.logger.info(f"strings.json: {_seg_count} individual segments extracted from delimiter groups")
             except Exception as e:
                 self.logger.debug(f"strings.json segment splitting skipped: {e}")
+            
+            # ── v2.7.4: Tag-stripped çeviri girişleri (replace_text güvenlik ağı) ──
+            # Ren'Py'ın config.replace_text callback'i metni tag tokenizasyonundan
+            # SONRA alır. "{b}Hello{/b} World" → replace_text("Hello "), replace_text("World")
+            # Bu parçalar strings.json'daki tam anahtarla eşleşmez.
+            # Çözüm: Tag'leri çıkarılmış sürümleri de ekle.
+            # Ayrıca tag'lerle SARMALANMIŞ metinlerin iç metnini ekle:
+            # "{color=#f00}Error{/color}" → "Error" eklenir.
+            try:
+                _RENPY_TAG_RE = re.compile(
+                    r'\{/?(?:b|i|u|s|plain|color|font|size|cps|nw|fast|w|p|a|'
+                    r'outlinecolor|alpha|k|rt|rb|image|space|vspace)(?:=[^}]*)?\}'
+                )
+                _tag_stripped_additions = {}
+                _tag_strip_count = 0
+                for m_orig, m_trans in list(mapping.items()):
+                    # Sadece Ren'Py tag'i içeren girdileri işle
+                    if not _RENPY_TAG_RE.search(m_orig):
+                        continue
+                    # Tag'leri çıkar
+                    stripped_orig = _RENPY_TAG_RE.sub('', m_orig).strip()
+                    stripped_trans = _RENPY_TAG_RE.sub('', m_trans).strip()
+                    # Anlamlı metin olmalı (en az 2 harf)
+                    if (stripped_orig and stripped_trans
+                            and stripped_orig != stripped_trans
+                            and len(stripped_orig) >= 2
+                            and any(c.isalpha() for c in stripped_orig)
+                            and stripped_orig not in mapping
+                            and stripped_orig not in _tag_stripped_additions):
+                        _tag_stripped_additions[stripped_orig] = stripped_trans
+                        _tag_strip_count += 1
+                if _tag_stripped_additions:
+                    mapping.update(_tag_stripped_additions)
+                    self.logger.info(
+                        f"strings.json: {_tag_strip_count} tag-stripped entries added for replace_text coverage"
+                    )
+            except Exception as e:
+                self.logger.debug(f"strings.json tag-stripping skipped: {e}")
             
             if skipped_corrupt > 0:
                 self.logger.warning(f"strings.json: Skipped {skipped_corrupt} potentially corrupted translation(s)")
@@ -1604,15 +1643,18 @@ init python:
         patterns = [
             # textbutton "text" veya textbutton 'text' -> textbutton _("text")
             # Ör: textbutton "Nap": veya textbutton 'Start' action Start()
-            (r"(textbutton\s+)(['\"])([^'\"]+)\2(\s*:|\s+action|\s+style|\s+xalign|\s+yalign|\s+at\s)", 
-             r'\1_(\2\3\2)\4'),
+            # v2.7.4: Lookahead kullanarak takip eden keyword zorunluluğu kaldırıldı
+            (r"(textbutton\s+)(['\"])([^'\"]+)\2(?=\s|$|:)", 
+             r'\1_(\2\3\2)'),
             
-            # text "..." veya text '...' size/color/xpos/ypos/xalign/yalign/outlines/at ile devam eden
-            # Ör: text "LOCKED" color "#FF6666" size 50
-            # Ör: text 'Quit':
-            # NOT: text "[variable]" gibi değişken içerenleri atla (skip_patterns ile)
-            (r"(\btext\s+)(['\"])([^'\"\[\]{}]+)\2(\s*:|\s+size|\s+color|\s+xpos|\s+ypos|\s+xalign|\s+yalign|\s+outlines|\s+at\s|\s+font|\s+style)", 
-             r'\1_(\2\3\2)\4'),
+            # text "..." veya text '...' -> text _("text")
+            # v2.7.4 FIX: Artık takip eden property (size, color vb.) zorunlu DEĞİL.
+            # Satır sonu, iki nokta veya boşluk yeterli. Bu sayede sade
+            # text "Hello" ifadeleri de yakalanıyor (eski pattern bunları kaçırıyordu).
+            # NOT: text "[variable]" → skip_patterns ile atlanır
+            # NOT: text "{b}Bold{/b}" → artık yakalanıyor (Ren'Py tag'leri _() içinde geçerli)
+            (r"(\btext\s+)(['\"])([^'\"\[\]]+)\2(?=\s|$|:)", 
+             r'\1_(\2\3\2)'),
             
             # tooltip "text" veya tooltip 'text' -> tooltip _("text")
             # Ör: tooltip "Dev Console (Toggle)"
@@ -1666,7 +1708,13 @@ init python:
             r'default\s+',        # default satırları
             r'=\s*[\'"][^\'"]*[\'"]\s*$',  # Sadece atama: variable = "value"
             r'[\'"][^\'"]*\[[^\]]+\][^\'"]*[\'"]',  # Değişken içeren: "[player]"
-            r'[\'"][^\'"]*\{[^\}]+\}[^\'"]*[\'"]',  # Tag içeren: "{b}text{/b}"
+            # v2.7.4 FIX: Ren'Py text tag'leri ({b}, {color=...} vb.) artık atlanmıyor
+            # çünkü _("{b}text{/b}") Ren'Py'da gayet geçerli. Sadece Python format
+            # string'leri ({}, {0}, {:d}, .format()) atlanıyor.
+            r'\.format\s*\(',                                    # .format() çağrısı
+            r'[\'"][^\'"]*\{\s*\}[^\'"]*[\'"]',                  # Boş brace: "{}"
+            r'[\'"][^\'"]*\{\d+[^}]*\}[^\'"]*[\'"]',             # Positional: "{0}", "{1:d}"
+            r'[\'"][^\'"]*\{:[^}]+\}[^\'"]*[\'"]',               # Format spec: "{:d}", "{:.2f}"
         ]
         
         modified_count = 0
@@ -1692,15 +1740,8 @@ init python:
                     filepath = os.path.join(root, filename)
 
                     try:
-                        # Her dosya için yedek oluştur
-                        # GÜVENLİK YAMASI: Yedekleme
-                        backup_path = filepath + ".bak"
-                        if not os.path.exists(backup_path):
-                            try:
-                                shutil.copy2(filepath, backup_path)
-                            except Exception as e:
-                                self.log_message.emit("warning", self.config.get_log_text('backup_failed_skipped', filename=filename))
-                                continue  # Dosya işlenmeden atlanıyor
+                        # Skip backup creation (.bak) to save space and reduce I/O noise.
+                        # Files are saved safely via save_text_safely which uses atomic writes.
                         
 
                         content = read_text_safely(Path(filepath))
@@ -1992,7 +2033,7 @@ init python:
                 # Import here to avoid circular imports if any
                 try:
                     from src.core.rpyc_reader import extract_texts_from_rpyc_directory
-                    rpyc_results = extract_texts_from_rpyc_directory(game_dir)
+                    rpyc_results = extract_texts_from_rpyc_directory(game_dir, config_manager=self.config)
                     self.log_message.emit("success", f"✅ .rpyc scan completed. {len(rpyc_results)} files processed.")
                 except ImportError:
                     self.log_message.emit("warning", self.config.get_log_text('rpyc_module_not_found'))
@@ -2501,15 +2542,10 @@ init python:
             if not project_name:
                 project_name = "default_project"
             
-            # Use program directory (next to run.py/executable)
-            app_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            # Check if frozen (PyInstaller)
-            if getattr(sys, 'frozen', False):
-                app_dir = os.path.dirname(sys.executable)
-            
-            base_cache_dir = os.path.join(app_dir, getattr(self.config.translation_settings, 'cache_path', 'cache'))
+            # Use data_dir from config (which accounts for portable mode)
+            base_cache_dir = os.path.join(self.config.data_dir, getattr(self.config.translation_settings, 'cache_path', 'cache'))
             cache_dir = os.path.join(base_cache_dir, project_name, self.target_language)
-            self.log_message.emit("info", f"Using global portable cache profile: [{project_name}]")
+            self.log_message.emit("info", f"Using global data cache: [{project_name}]")
         else:
             # Standard path: game/tl/<lang>/translation_cache.json
             cache_dir = os.path.join(self.project_path, 'game', 'tl', self.target_language)
@@ -2534,7 +2570,8 @@ init python:
                 )
                 if tm_source_paths:
                     from src.tools.external_tm import ExternalTMStore
-                    _external_tm = ExternalTMStore()
+                    tm_dir = str(os.path.join(self.config.data_dir, "tm"))
+                    _external_tm = ExternalTMStore(tm_dir=tm_dir)
                     loaded = _external_tm.load_sources(tm_source_paths)
                     if loaded > 0:
                         self.log_message.emit("info", f"[ExternalTM] {loaded} entry loaded from {_external_tm.loaded_source_count} source(s)")

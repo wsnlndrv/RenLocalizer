@@ -57,7 +57,25 @@ For low-end systems or very massive games:
 
 ---
 
-## 🌐 Engine Selection
+## 🧠 External Translation Memory (TM)
+
+The fastest translation is the one you **don't need to make**. If you have already translated one or more Ren'Py games, import their `tl/` folders as Translation Memory sources.
+
+### How TM Speeds Things Up
+*   **Zero-latency lookup:** TM matches are a pure dictionary lookup — no network, no API, no latency.
+*   **Common UI strings:** Ren'Py default UI text ("Save", "Load", "Start", "Preferences", "Return") is nearly identical across most games. One TM import can cover 50–200 strings instantly.
+*   **Cumulative benefit:** Each new game you translate grows your TM. After 4–5 games, you may see **10–30% hit rates** on new projects.
+
+### How to Enable
+1.  **Import:** **Tools** page → **"Import from tl/ folder"**
+2.  **Enable:** **Settings** page → **"External Translation Memory" ON**
+3.  **Select:** **Home** page → Check TM sources
+
+> 📖 Full details: [[External-Translation-Memory]]
+
+---
+
+## 📊 Engine Selection
 *   **Fastest:** Google (via Multi-Endpoint).
 *   **High Quality:** DeepL (Requires API Key).
 *   **Smartest:** AI Engines (GPT/Gemini). **Note:** These are much slower due to the nature of Large Language Models.
@@ -73,4 +91,4 @@ For low-end systems or very massive games:
 5.  Tune delay/concurrency gradually instead of jumping to extreme values.
 
 ---
-> 💡 **Tip:** Use **Google** for the bulk of the game and switch to **AI** only for the most important story dialogue to save time.
+> 💡 **Tip:** Import TM from previous games + use **Google** for the bulk + switch to **AI** for important story dialogue. This is the optimal speed/quality strategy.

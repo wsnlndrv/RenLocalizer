@@ -23,7 +23,7 @@ Many games delete their source `.rpy` files to prevent modding.
 ---
 
 ## 🔹 3. Script Normalization
-RenDeveloper automatically scans for legacy encodings (like Shift-JIS) and converts them to **UTF-8**. This ensures that once extracted, the files won't cause character errors in Ren'Py.
+RenLocalizer automatically scans for legacy encodings (like Shift-JIS) and converts them to **UTF-8**. This ensures that once extracted, the files won't cause character errors in Ren'Py.
 
 ---
 
@@ -33,7 +33,12 @@ RenDeveloper automatically scans for legacy encodings (like Shift-JIS) and conve
 | :--- | :--- |
 | **"No RPA found"** | Ensure you selected the parent folder of the `game` directory. |
 | **Permission Error** | Run RenLocalizer as Administrator (needed for `Program Files`). |
-| **Disk Space** | Extraction can double the game's size. Ensure you have free space. |
+| **Disk Space** | Extraction can double the game's size. |
+
+### **Automatic Cleanup (v2.7.4)**
+To prevent disk bloat and archive priority conflicts:
+- **Auto-Delete RPA:** After successful extraction, RenLocalizer automatically deletes original `.rpa` files.
+- **No .bak Files:** Manual `.bak` backups during extraction are disabled in favor of atomic safe-writes.
 
 ---
-> ⚠️ **Warning:** Always make a **Manual Backup** of your game folder before running heavy extraction tools!
+> ⚠️ **Warning:** Always make a **Manual Backup** of your game folder before running extraction tools if you want to keep original archives!

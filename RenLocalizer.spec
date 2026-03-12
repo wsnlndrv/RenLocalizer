@@ -44,6 +44,14 @@ else:
         'PIL._tkinter_finder',
     ])
 
+# Force include PyQt6 specific plugins and hidden imports for Linux
+if sys.platform != 'win32':
+    hidden_imports.extend([
+        'PyQt6.QtOpenGL',
+        'PyQt6.QtNetwork',
+        'PyQt6.QtPrintSupport',
+    ])
+
 # Define datas with absolute paths to avoid not found errors
 datas_list = [
     (os.path.join(project_dir, 'locales'), 'locales'),
@@ -103,7 +111,8 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=os.path.join(project_dir, 'icon.ico')
+    icon=os.path.join(project_dir, 'icon.ico'),
+    manifest=os.path.join(project_dir, 'build', 'windows', 'RenLocalizer.manifest'),
 )
 
 # =========================================================

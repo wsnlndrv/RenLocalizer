@@ -175,15 +175,12 @@ class UnrpaAdapter:
             if self.extract_rpa(rpa_file, rpa_file.parent):
                 success_count += 1
                 
-                # Rename the rpa file to .rpa.bak
+                # Delete the rpa file to save space and avoid Ren'Py archive conflict
                 try:
-                    bak_path = rpa_file.with_suffix(".rpa.bak")
-                    if bak_path.exists():
-                        bak_path.unlink()
-                    rpa_file.rename(bak_path)
-                    self.logger.info(f"Renamed {rpa_file.name} to .rpa.bak")
+                    rpa_file.unlink()
+                    self.logger.info(f"Deleted original archive {rpa_file.name} to save space.")
                 except OSError as e:
-                    self.logger.warning(f"Could not rename {rpa_file}: {e}")
+                    self.logger.warning(f"Could not delete {rpa_file}: {e}")
 
         self.logger.info(f"Extraction complete: {success_count}/{len(rpa_files)} archives")
         return success_count > 0

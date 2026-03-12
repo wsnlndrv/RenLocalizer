@@ -11,6 +11,8 @@ The easiest way to use RenLocalizer on Windows:
 2.  Download the latest `RenLocalizer_vX.X.X_Windows.zip`.
 3.  **Extract** the ZIP file to a folder of your choice.
 4.  Run `RenLocalizer.exe` to start the GUI.
+15: 
+16: > 🚀 **v2.7.4 Update:** RenLocalizer now defaults to **System Mode** (AppData). If you specifically want a portable experience (e.g., on a USB stick), toggle **Portable Mode** in Settings to move all your data next to the executable.
 
 ---
 

@@ -219,7 +219,7 @@ Rectangle {
         title: (backend.uiTrigger, backend.getTextWithDefault("edit_cache_title", "Edit Cache"))
         anchors.centerIn: parent
         modal: true
-        width: 450
+        width: Math.min(450, root.width * 0.85)
         
         property string engine: ""
         property string sourceLang: ""

@@ -14,6 +14,8 @@ The project is split into logical components:
 *   📂 **`src/gui/`**: PyQt6 + QML (Fluid Design) interface.
     *   `qml/`: Contains all .qml files for the UI.
     *   `settings_backend.py`: Bridges settings between Python and QML.
+*   📂 **`src/tools/`**: Optional feature modules.
+    *   `external_tm.py`: External Translation Memory — imports TM from other games' `tl/` folders.
 *   📂 **`src/utils/`**: Shared helpers, configuration manager, and constants.
 *   📂 **`tools/`**: Standalone scripts for testing and debugging.
 

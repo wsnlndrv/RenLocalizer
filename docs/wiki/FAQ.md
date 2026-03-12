@@ -206,5 +206,27 @@ Even after a full translation, some parts might remain in English.
 *   **Workaround:** Use **TL Translate** tool to translate existing `tl/` folders selectively.
 
 ---
-> �🚩 **Still Stuck?** [Open an issue on GitHub](https://github.com/Lord0fTurk/RenLocalizer/issues) and attach your `error_output.txt`.
+## 🧠 13. External Translation Memory (TM)
+
+### "How can I reuse translations from another game?"
+*   **Feature:** RenLocalizer v2.7.3 introduced **External Translation Memory**. You can import translations from any previously translated Ren'Py game's `tl/<language>/` folder.
+*   **How:**
+    1.  Go to **Tools** page → Click **"Import from tl/ folder"**.
+    2.  Select the `tl/<language>/` folder of the translated game.
+    3.  Enable TM in **Settings** and select sources on the **Home** page.
+*   **Result:** Common strings are matched instantly without any API call.
+
+### "Why is my TM hit rate low?"
+*   TM uses **exact match** only — even small differences (capitalization, punctuation) will miss.
+*   **Solution:** Import TM from multiple games, especially ones using the default Ren'Py UI (Start, Save, Load, Preferences, etc.).
+
+### "Can I use TM with AI engines (GPT, Gemini)?"
+*   **Yes!** TM works with all engines. Matched strings skip the API entirely, saving tokens and costs.
+
+### "How do I delete or manage TM sources?"
+*   Go to **Tools** page → The TM card shows all imported sources with entry counts. You can remove individual TM files from the `tm/` folder if needed.
+
+> 📖 See [[External-Translation-Memory]] for the complete guide.
+
+---> �🚩 **Still Stuck?** [Open an issue on GitHub](https://github.com/Lord0fTurk/RenLocalizer/issues) and attach your `error_output.txt`.
 

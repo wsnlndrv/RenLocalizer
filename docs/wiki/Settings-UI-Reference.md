@@ -10,6 +10,11 @@ This guide explains the advanced options found in the RenLocalizer **Settings** 
 *   **App Language:** Changes the interface language of RenLocalizer itself.
 *   **Theme:** Switches between Light, Dark, and System themes.
 *   **Check Updates:** If enabled, the app checks for new versions on GitHub startup.
+13: 
+14: ### **Smart Data Path (v2.7.4)**
+15: *   **Portable Mode Toggle:** Switches between storing user data in `AppData` (System Mode) or next to the application (Portable Mode).
+16: *   **Automatic Migration:** Switching modes automatically **moves** (not copies) your `cache/`, `tm/`, and `glossary.json` files to the correct location.
+17: *   **Open Data Folder:** A quick shortcut to open the active data directory (either AppData or the Local folder) in File Explorer.
 
 ---
 
@@ -66,3 +71,15 @@ Control how the AI "thinks" and behaves.
 
 ### **Force Runtime Translation**
 *   Injects a script into the game to force Ren'Py to translate strings on-the-fly. This is a powerful backup for strings that hard-coded scanning simply cannot find.
+
+---
+
+## 🧠 External Translation Memory
+
+### **Use External TM**
+*   **Default:** `OFF`
+*   **What it does:** Enables the External Translation Memory system. When enabled, RenLocalizer checks imported TM sources for exact matches before calling any translation API.
+*   **How to use:** Import TM sources from the **Tools** page first, then enable this toggle.
+*   **Benefit:** Reduces API calls, speeds up translation, and ensures consistency for common strings.
+
+> 📖 See [[External-Translation-Memory]] for the full guide on importing and using TM.

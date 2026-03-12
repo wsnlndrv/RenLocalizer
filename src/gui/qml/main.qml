@@ -4,16 +4,17 @@ import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import QtQuick.Window
 
 import "components"
 import "pages"
 
 ApplicationWindow {
     id: root
-    width: 1200
-    height: 800
-    minimumWidth: 900
-    minimumHeight: 600
+    width: Math.min(1200, Screen.desktopAvailableWidth * 0.9)
+    height: Math.min(800, Screen.desktopAvailableHeight * 0.9)
+    minimumWidth: Math.min(900, Screen.desktopAvailableWidth * 0.85)
+    minimumHeight: Math.min(600, Screen.desktopAvailableHeight * 0.85)
     title: (typeof backend !== "undefined" && backend !== null) 
            ? (backend.uiTrigger, backend.getTextWithDefault("app_title", "RenLocalizer") + " v" + backend.version) 
            : "RenLocalizer"
@@ -265,7 +266,7 @@ ApplicationWindow {
         property string url: ""
         
         anchors.centerIn: parent
-        width: 450
+        width: Math.min(450, root.width * 0.85)
         modal: true
         title: (backend.uiTrigger, backend.getTextWithDefault("update_available_title", "🚀 Update Available!"))
         
@@ -326,7 +327,7 @@ ApplicationWindow {
         property alias text: warningText.text
         
         anchors.centerIn: parent
-        width: 400
+        width: Math.min(400, root.width * 0.85)
         modal: true
         
         title: "⚠️ " + (backend.uiTrigger, backend.getTextWithDefault("warning", "Warning"))

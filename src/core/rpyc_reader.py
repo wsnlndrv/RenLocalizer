@@ -1461,6 +1461,10 @@ class ASTTextExtractor:
         if self._is_technical_string(text, context):
             return
         
+        # Apply user-configurable text type filters (translate_dialogue, translate_ui, etc.)
+        if not self.parser._should_translate_text(text, text_type):
+            return
+        
         # store in seen_map
         context_path = []
         if context:

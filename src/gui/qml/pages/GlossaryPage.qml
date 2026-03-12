@@ -206,7 +206,7 @@ Rectangle {
         title: (backend.uiTrigger, backend.getTextWithDefault("glossary_add_title", "Add Term"))
         anchors.centerIn: parent
         modal: true
-        width: 400
+        width: Math.min(400, root.width * 0.85)
         
         property alias sourceText: sourceField.text
         property alias targetText: targetField.text

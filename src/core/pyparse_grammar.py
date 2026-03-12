@@ -269,15 +269,21 @@ def extract_with_pyparsing(content: str, file_path: str = "") -> List[Dict]:
 
         # Blok başlangıçları
         if stripped.startswith("label "):
-            label_name = stripped.split()[1].split(":")[0]
-            context_stack.append((f"label:{label_name}", indent))
+            tokens = stripped.split()
+            if len(tokens) > 1:
+                label_name = tokens[1].split(":")[0]
+                context_stack.append((f"label:{label_name}", indent))
             continue
         if stripped.startswith("screen "):
-            screen_name = stripped.split()[1].split(":")[0]
-            context_stack.append((f"screen:{screen_name}", indent))
+            tokens = stripped.split()
+            if len(tokens) > 1:
+                screen_name = tokens[1].split(":")[0]
+                context_stack.append((f"screen:{screen_name}", indent))
         if stripped.startswith("transform "):
-            trans_name = stripped.split()[1].split(":")[0]
-            context_stack.append((f"transform:{trans_name}", indent))
+            tokens = stripped.split()
+            if len(tokens) > 1:
+                trans_name = tokens[1].split(":")[0]
+                context_stack.append((f"transform:{trans_name}", indent))
         if stripped.startswith("menu"):
             context_stack.append(("menu", indent))
         if stripped.startswith("python") or stripped.startswith("init python") or stripped.startswith("$"):

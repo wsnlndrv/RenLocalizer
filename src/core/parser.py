@@ -818,14 +818,15 @@ class RenPyParser:
                     continue
                 
                 # V2.7.2: Deep Variable Analysis for global Pyparsing entries
-                if self._is_deep_feature_enabled('deep_extraction_bare_defines'):
-                    ctx_line = entry.get('context_line', '')
-                    if ctx_line and ('define ' in ctx_line or 'default ' in ctx_line):
-                        m_var = re.match(r'^\s*(?:define|default)\s+(?P<var_name>[a-zA-Z0-9_.]+)\s*=', ctx_line)
-                        if m_var:
-                            var_name = m_var.group('var_name')
-                            if not self._deep_var_analyzer.is_likely_translatable(var_name):
-                                continue
+                ctx_line = entry.get('context_line', '')
+                if ctx_line and ('define ' in ctx_line or 'default ' in ctx_line):
+                    m_var = re.match(r'^\s*(?:define|default)\s+(?P<var_name>[a-zA-Z0-9_.]+)\s*=', ctx_line)
+                    if m_var:
+                        if not self._is_deep_feature_enabled('deep_extraction_bare_defines'):
+                            continue  # Feature disabled → skip bare define/default strings
+                        var_name = m_var.group('var_name')
+                        if not self._deep_var_analyzer.is_likely_translatable(var_name):
+                            continue
                 # Use raw_text when available for canonical deduplication,
                 # and normalize escape/newline variants so different extraction
                 # passes don't produce duplicate IDs for the same literal.
@@ -842,11 +843,21 @@ class RenPyParser:
                 
                 # Check if we already have this text in this context (ignore line number differences)
                 if key not in seen_texts:
-                    # context_path ve text_type zorunlu olsun
-                    entry.setdefault('context_path', ctx)
-                    entry.setdefault('text_type', 'unknown')
-                    entries.append(entry)
-                    seen_texts.add(key)
+                    # Route through _record_entry for text_type resolution and
+                    # user-configurable type filtering (_should_translate_text).
+                    filtered_entry = self._record_entry(
+                        text=text_value,
+                        raw_text=entry.get('raw_text'),
+                        line_number=entry.get('line_number', 0),
+                        context_line=entry.get('context_line', ''),
+                        text_type=entry.get('text_type') or entry.get('type', ''),
+                        context_path=list(ctx),
+                        character=entry.get('character', ''),
+                        file_path=str(file_path),
+                    )
+                    if filtered_entry:
+                        entries.append(filtered_entry)
+                        seen_texts.add(key)
         except Exception as e:
             self.logger.warning(f"Pyparsing ana extraction başarısız: {e}")
 
@@ -865,14 +876,15 @@ class RenPyParser:
                     continue
                 
                 # V2.7.2: Deep Variable Analysis for TokenStream entries
-                if self._is_deep_feature_enabled('deep_extraction_bare_defines'):
-                    ctx_line = token.context_line
-                    if ctx_line and ('define ' in ctx_line or 'default ' in ctx_line):
-                        m_var = re.match(r'^\s*(?:define|default)\s+(?P<var_name>[a-zA-Z0-9_.]+)\s*=', ctx_line)
-                        if m_var:
-                            var_name = m_var.group('var_name')
-                            if not self._deep_var_analyzer.is_likely_translatable(var_name):
-                                continue
+                ctx_line = token.context_line
+                if ctx_line and ('define ' in ctx_line or 'default ' in ctx_line):
+                    m_var = re.match(r'^\s*(?:define|default)\s+(?P<var_name>[a-zA-Z0-9_.]+)\s*=', ctx_line)
+                    if m_var:
+                        if not self._is_deep_feature_enabled('deep_extraction_bare_defines'):
+                            continue  # Feature disabled → skip bare define/default strings
+                        var_name = m_var.group('var_name')
+                        if not self._deep_var_analyzer.is_likely_translatable(var_name):
+                            continue
                 raw_txt = token.raw_text
                 canonical = raw_txt or text_value
                 canonical = canonical.replace('\r\n', '\n').replace('\r', '\n')
@@ -966,9 +978,9 @@ class RenPyParser:
                 # V2.7.1: Deep Extraction variable name filtering
                 # For bare define/default patterns, check if variable name suggests translatable content
                 _desc_type = descriptor.get('type', '')
-                if descriptor.get('deep_extract') or _desc_type in ('define', 'store', 'layout', 'config', 'gui', 'style'):
+                if descriptor.get('deep_extract') or _desc_type in (TextType.DEFINE_TEXT, 'define', 'store', 'layout', 'config', 'gui', 'style'):
                     # Respect config toggle — skip if deep extraction for bare defines is disabled (only for non-essential types)
-                    if _desc_type == 'define' and not self._is_deep_feature_enabled('deep_extraction_bare_defines'):
+                    if _desc_type in (TextType.DEFINE_TEXT, 'define') and not self._is_deep_feature_enabled('deep_extraction_bare_defines'):
                         # If it's a bare define and feature is off, skip it
                         continue
                         
@@ -1862,6 +1874,17 @@ class RenPyParser:
         )
         if self._is_python_context(context_path):
             resolved_type = 'renpy_func'
+        
+        # Context-based type correction: if context_path indicates screen/menu,
+        # override generic types like 'dialogue' with the correct category.
+        # This prevents screen/menu text from being misclassified as dialogue
+        # when the regex pattern matched a generic string shape.
+        if context_path and resolved_type in ('dialogue', 'narration', 'monologue', 'unknown', ''):
+            lowered_ctx = [ctx.lower() for ctx in context_path if ctx]
+            if any(ctx.startswith('screen') for ctx in lowered_ctx):
+                resolved_type = 'ui'
+            elif any(ctx.startswith('menu') for ctx in lowered_ctx):
+                resolved_type = 'menu'
 
         # Apply user-configurable type filters (e.g. translate_ui)
         if not self._should_translate_text(text, resolved_type):
@@ -2566,6 +2589,63 @@ class RenPyParser:
             # Use same settings as dialogue
             if not ts.translate_dialogue:
                 return False
+        # NVL dialogue follows dialogue setting
+        if text_type == 'nvl_dialogue' and not ts.translate_dialogue:
+            return False
+        # Screen text follows UI setting
+        if text_type in ('screen_text', 'screen') and not ts.translate_ui:
+            return False
+        # Extend follows dialogue setting
+        if text_type == 'extend' and not ts.translate_dialogue:
+            return False
+        # Data file strings follow config_strings setting
+        if text_type == 'string' and not ts.translate_config_strings:
+            return False
+        # Character name definitions
+        if text_type == 'character_name' and not getattr(ts, 'translate_character_names', ts.translate_dialogue):
+            return False
+
+        # ─── Pyparsing screen element types (tag name used as type) ───
+        # 'text', 'label', 'viewport', 'vbox', 'hbox', etc. → UI elements
+        _screen_element_types = {
+            'text', 'label', 'viewport', 'vbox', 'hbox', 'frame',
+            'window', 'timer', 'bar', 'vbar', 'side', 'grid',
+            'text_displayable', 'show_text',
+        }
+        if text_type in _screen_element_types and not ts.translate_ui:
+            return False
+        # 'textbutton', 'imagebutton' → button elements
+        if text_type in ('textbutton', 'imagebutton') and not getattr(ts, 'translate_buttons', ts.translate_ui):
+            return False
+
+        # ─── Pyparsing/grammar-assigned types ───
+        # 'data_string' (generic string outside known patterns) → config strings  
+        if text_type == 'data_string' and not ts.translate_config_strings:
+            return False
+        # 'narration', 'monologue' → dialogue
+        if text_type in ('narration', 'monologue') and not ts.translate_dialogue:
+            return False
+        # 'menu_choice' → menu
+        if text_type == 'menu_choice' and not ts.translate_menu:
+            return False
+        # 'python_translatable' → _() marked, always translated
+        if text_type == 'python_translatable':
+            return True
+        # 'python_notify' → notifications
+        if text_type == 'python_notify' and not getattr(ts, 'translate_notifications', ts.translate_dialogue):
+            return False
+        # 'python_input' → input text
+        if text_type == 'python_input' and not getattr(ts, 'translate_input_text', ts.translate_ui):
+            return False
+        # 'define_text' (TextType.DEFINE_TEXT) → define strings
+        if text_type == 'define_text' and not getattr(ts, 'translate_define_strings', ts.translate_config_strings):
+            return False
+        # 'config_text' → config strings
+        if text_type == 'config_text' and not ts.translate_config_strings:
+            return False
+        # 'immediate_translation' → __("text"), always translated
+        if text_type == 'immediate_translation':
+            return True
 
         rules: Dict[str, Any] = getattr(self.config, 'never_translate_rules', {}) or {}
 

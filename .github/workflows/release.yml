@@ -202,6 +202,10 @@ jobs:
           # Add a symlink to /Applications for drag-and-drop install
           ln -s /Applications dmg_contents/Applications
 
+          # Force sync and wait briefly to avoid "Resource busy" race conditions
+          sync
+          sleep 5
+
           # Create DMG
           hdiutil create \
             -volname "RenLocalizer" \

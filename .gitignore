@@ -11,6 +11,7 @@ __pycache__/
 build/*
 !build/linux/
 !build/macos/
+!build/windows/
 develop-eggs/
 dist/
 downloads/
@@ -32,6 +33,7 @@ MANIFEST
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
+!build/windows/RenLocalizer.manifest
 
 
 # Installer logs

@@ -28,7 +28,9 @@ Rectangle {
 
             Image {
                 anchors.centerIn: parent
-                source: backend.get_asset_url("icon.ico")
+                source: Qt.platform.os === "windows"
+                    ? backend.get_asset_url("icon.ico")
+                    : backend.get_asset_url("icon.png")
                 width: 36
                 height: 36
                 fillMode: Image.PreserveAspectFit

@@ -1,71 +1,65 @@
-# 📤 External AI Translation (Export/Import)
+# 📤 External AI Translation (Export/Import Workflow)
 
-The **External AI Translation** feature (introduced in v2.6.0) allows you to translate game strings without using a direct API connection. This is ideal for users who prefer using web interfaces like ChatGPT, Claude, or DeepL, or for those dealing with extremely large projects where direct API costs or rate limits are a concern.
-
----
-
-## 🚀 How It Works
-
-This feature follows a "Round-trip" localization workflow:
-1. **Selection:** Choose between **JSON** (API-ready) or **Simple TXT** (Chat-friendly) formats.
-2. **Export:** Scan your game and generate the files along with a hidden metadata cache.
-3. **Translate:** Upload files or paste text into your preferred AI tool.
-4. **Import:** Bring the translated content back to update your game instantly.
+The **External AI Translation** feature allows you to translate game strings without using a direct API connection. This is the "Manual/Offline" alternative to the direct translation pipeline, ideal for using web interfaces like ChatGPT/Claude or for team-based localizations.
 
 ---
 
-## 📄 Export Formats
+## 🔄 The Round-trip Workflow
 
-### 1. JSON (Structured)
-The standard professional format. It preserves complex structure and includes a `translation_id` for perfect matching.
-*   **Best for:** Paid AI APIs (GPT-4o, Claude 3.5 via API) and Advanced users.
-*   **Split Logic:** Large games split into multiple `.json` files.
+This feature follows a structured 4-step process:
+1. **Export:** Scan your project in the **Tools** tab and export untranslated strings to a transfer file.
+2. **External Translation:** Upload the file to an AI (Claude, GPT-4, etc.) or open it in a tool like Excel/Google Sheets.
+3. **Refine:** Manually check or AI-generate translations while keeping the original IDs intact.
+4. **Import:** Bring the translated file back into RenLocalizer to update your game instantly.
 
-### 2. Simple TXT (Copy-Paste)
-A minimalist format designed specifically for AI Chat interfaces (like the free version of Claude or ChatGPT).
+---
+
+## 📄 Supported Export Formats (v2.7+)
+
+RenLocalizer provides several formats depending on your workflow:
+
+### 1. JSON (Structured - Recommended for AI)
+The professional standard. Includes `translation_id`, `character`, and `context`.
+*   **Best for:** Uploading to Claude 3.5, GPT-4o, or OpenRouter.
+*   **Logic:** Preserves metadata used for perfect matching during import.
+
+### 2. XLSX / CSV (Excel - Recommended for Human Teams)
+Newer versions support exporting to spreadsheets.
+*   **Best for:** Human translators or bulk editing in Google Sheets.
+*   **Structure:** Column A (Original), Column B (Translation), Column C (ID).
+
+### 3. Simple TXT (Chat-Friendly)
+A minimalist format designed for "Copy-Paste" into AI web chats.
 *   **Format:** `ID|||Text`
-*   **Safe-Guard:** Uses `<BR>` for newlines and `<PIPE3>` for vertical bars to prevent AI from breaking the structure.
-*   **Best for:** Quick copy-pasting into character-limited web chats.
+*   **Benefit:** Zero overhead, fits more strings into a single AI prompt.
 
 ---
 
-## 📤 Exporting Strings
+## 🛠️ Advanced Export Settings
 
-Navigate to the **Tools (Araçlar)** section.
-
-### Configuration Options:
-*   **Export only untranslated:** (Recommended) Saves processing time by skipping already localized lines.
-*   **Include context:** Includes character names and file references. **Highly recommended** for accurate tone.
-*   **Smart Chunking (1500):** Now optimized to split at 1500 strings to ensure even small-context models don't truncate the output.
-
-### Instructions & Prompts:
-The tool automatically generates:
-*   `PROMPT_FOR_AI.txt` (for JSON)
-*   `INSTRUCTIONS_SIMPLE.txt` (for Simple TXT)
-**Always give these instructions to the AI first!** They contain ASCII diagrams and rules that guarantee the AI won't break placeholders.
+*   **Export Only Untranslated:** (Default) Only extracts what hasn't been localized yet.
+*   **Include Context:** Adds character names and file paths as comments in the export.
+*   **Chunk Size:** Automatically splits large projects into manageable pieces (e.g., 500 strings per file) to avoid AI truncation.
+*   **Instruction Generation:** RenLocalizer automatically creates a `PROMPT_FOR_AI.txt` in your export folder. **Read and use this prompt!** It contains the rules the AI must follow to preserve syntax.
 
 ---
 
-## 📥 Importing Translations
+## 🧠 External Translation Memory (TM) Entegration
 
-### ID Stability (v3 Engine)
-RenLocalizer v3 uses a deterministic hashing system based on Ren'Py block IDs.
-1. **Auto-File Creation:** If your `tl/` folder is empty, RenLocalizer will automatically create the required `.rpy` files.
-2. **Dialogue Awareness:** It differentiates between dialogues (which need `translate` blocks) and UI strings (which need `old/new` syntax).
-3. **In-place Update:** It updates the correct files directly, preserving your project's organization.
-
-### Cache Matching
-For **Simple TXT** imports, the tool looks for a hidden `.{filename}_cache.json` file. This file "remembers" which ID belongs to which character and file, so your Simple TXT remains clean while the import remains perfectly accurate.
+In **v2.7.3+**, you can use these exported/imported files as **External TM**.
+1. Import a completed translation file from another project.
+2. Enable "Use External TM" in **Settings**.
+3. RenLocalizer will now check this "Memory" before making any API calls, saving you money and time.
 
 ---
 
-## 💡 Best Practices
+## 💡 Pro Tips for AI Translation
 
-*   **Avoid conversational AI chatter:** Tell the AI "Return ONLY the translated content with the original IDs" (This is already included in our generated prompts).
-*   **Check placeholders:** If you see `[ isim ]` instead of `[name]`, the AI has failed. RenLocalizer will try to block these, but always double-check.
-*   **Recursive Export:** For active development, use "Export only untranslated" to capture only the new lines you've added since the last version.
+*   **The "Context" Rule:** Always include character descriptions in your first prompt. AI translates better when it knows "Eileen" is a cheerful guide vs. a serious villain.
+*   **Verify Placeholders:** If you see `[ isim ]` instead of `[name]`, the AI added spaces. Use the **Tools > Placeholder Fixer** if this happens during a manual import.
+*   **Recursive Workflow:** You can Export → Translate → Import → Then use the **Direct Translator** for any remaining or tricky strings.
 
 ---
 > 🔗 **Related Pages:**
-> * [[Technical-Filtering]] — How variables are protected.
-> * [[Output-Formats]] — Difference between RPY formats.
+> * [[Settings-UI-Reference]] — How to enable TM.
+> * [[Output-Formats]] — The technical details of what gets imported.

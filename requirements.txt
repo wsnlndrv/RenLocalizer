@@ -1,5 +1,5 @@
 # Core GUI Framework
-PyQt6>=6.4.0
+PyQt6==6.10.1
 
 # HTTP and async support
 aiohttp>=3.8.0

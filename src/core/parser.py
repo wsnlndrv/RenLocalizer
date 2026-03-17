@@ -15,7 +15,7 @@ import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 import chardet
 from src.utils.encoding import read_text_safely
@@ -76,6 +76,7 @@ class TextType:
 # Shared regex pattern for quoted strings (DRY principle)
 # Matches: "text", 'text', r"text", f'text', rf"text", etc.
 _QUOTED_STRING_PATTERN = r'(?:[rRuUbBfF]{,2})?(?P<quote>"(?:[^"\\]|\\.)*"|\'(?:[^\\\']|\\.)*\')'
+HOTKEY_SOURCE_RE = re.compile(r"^(?P<label>.+?)\s*/\s*(?P<hotkey>[A-Za-z])$")
 
 # Safety limits to prevent ReDoS attacks
 MAX_LINE_LENGTH = 10000  # Lines longer than this skip regex processing
@@ -93,6 +94,7 @@ class RenPyParser:
     def __init__(self, config_manager=None):
         self.logger = logging.getLogger(__name__)
         self.config = config_manager
+        self._long_line_warning_keys: Set[Tuple[str, int, int]] = set()
 
         # Technical terms for filtering
         self.renpy_technical_terms = {
@@ -261,6 +263,11 @@ class RenPyParser:
         )
         self.screen_text_translatable_re = re.compile(
             r"^\s*(?:text|label|tooltip)\s+_\s*\(\s*(?:[rRuUbBfF]{,2})?(?P<quote>\"(?:[^\"\\]|\\.)*\"|'(?:[^\\']|\\.)*')\s*\)"
+        )
+        self.menu_context_hotkey_re = re.compile(
+            r"^\s*\"[^\"]+\"\s*:\s*\[\s*"
+            r"(?P<quote>\"(?:[^\"\\]|\\.)*\"|'(?:[^\\']|\\.)*')"
+            r"\s*,.*\"(?:option|submenu|exit|button)\""
         )
         self.screen_multiline_re = re.compile(
             r'^\s*(?:text|label|tooltip|textbutton)\s+(?:_\s*\(\s*)?(?P<delim>"""|\'\'\')(?P<body>.*)$'
@@ -486,6 +493,24 @@ class RenPyParser:
         
         # State tracking for context-aware filtering
         self._current_context_line = ""
+
+    def _warn_once_for_excessive_line(
+        self,
+        file_path: Union[str, Path],
+        line_number: int,
+        line_length: int,
+    ) -> None:
+        warning_key = (str(file_path), line_number, line_length)
+        if warning_key in self._long_line_warning_keys:
+            return
+        self._long_line_warning_keys.add(warning_key)
+        if self.logger.isEnabledFor(logging.WARNING):
+            self.logger.warning(
+                "Skipping line %s in %s due to excessive length (%s)",
+                line_number,
+                file_path,
+                line_length,
+            )
 
     def _is_deep_feature_enabled(self, feature: str = None) -> bool:
         """
@@ -943,8 +968,11 @@ class RenPyParser:
             # --- String Extraction ---
             # ReDoS Prevention: Skip overly long lines before ANY regex processing
             if len(raw_line) > MAX_LINE_LENGTH:
-                if self.logger.isEnabledFor(logging.WARNING):
-                     self.logger.warning(f"Skipping line {idx+1} in {file_path} due to excessive length ({len(raw_line)})")
+                self._warn_once_for_excessive_line(
+                    file_path=file_path,
+                    line_number=idx + 1,
+                    line_length=len(raw_line),
+                )
                 continue
 
             for descriptor in self.pattern_registry:
@@ -1025,6 +1053,21 @@ class RenPyParser:
                         log_line = f"{file_path}:{idx+1} [{text_type}] ctx={current_path} text={text}"
                         self.logger.info(f"[ENTRY] {log_line}")
                 break
+
+            menu_context_match = self.menu_context_hotkey_re.match(raw_line)
+            if menu_context_match:
+                self._process_secondary_extraction(
+                    match=menu_context_match,
+                    text_type=TextType.MENU_CHOICE,
+                    raw_line=raw_line,
+                    idx=idx,
+                    lines=lines,
+                    stripped_line=stripped_line,
+                    current_path=current_path,
+                    seen_texts=seen_texts,
+                    entries=entries,
+                    file_path=file_path
+                )
 
             # --- V2.6.4: Secondary Pass for Actions (Confirm, Notify, Input) ---
             # This runs independently so we can capture BOTH the button text AND the action prompt on the same line.
@@ -1339,8 +1382,8 @@ class RenPyParser:
             quote_raw = match.group('quote')
             raw, text = self._extract_string_raw_and_unescaped(quote_raw, start_line=idx, lines=lines)
             
-            # Early exit: Skip empty or non-meaningful text
-            if not text or not self.is_meaningful_text(text):
+            # Let _record_entry apply the full context-aware filter chain.
+            if not text:
                 return
             
             # Deduplication key: (text, character, context_path)
@@ -1504,7 +1547,13 @@ class RenPyParser:
             self.logger.error(f"XML parsing error {file_path}: {e}")
         return entries
 
-    def parse_directory(self, directory: Union[str, Path], include_deep_scan: bool = True, recursive: bool = True) -> Dict[Path, List[Dict[str, Any]]]:
+    def parse_directory(
+        self,
+        directory: Union[str, Path],
+        include_deep_scan: bool = True,
+        recursive: bool = True,
+        progress_callback: Optional[Callable[[int, int, Path], None]] = None,
+    ) -> Dict[Path, List[Dict[str, Any]]]:
         """
         Parse a directory for translatable strings, restricted to Ren'Py files only.
         """
@@ -1528,14 +1577,22 @@ class RenPyParser:
             extensions = ["**/*.rpy", "**/*.rpym"] # Exclude .rpyc/.rpymc from text parser
         else:
             extensions = ["**/*.rpy"] # Exclude .rpyc from text parser
-        files = []
+        files: List[Path] = []
         for ext in extensions:
             files.extend(list(search_root.glob(ext)))
-            
-        for i, file_path in enumerate(files):
-            if not _in_tl_folder(file_path) and not self._is_excluded_rpy(file_path, search_root):
-                results[file_path] = self.extract_text_entries(file_path)
-            
+
+        processable_files = [
+            file_path
+            for file_path in files
+            if not _in_tl_folder(file_path) and not self._is_excluded_rpy(file_path, search_root)
+        ]
+
+        total_files = len(processable_files)
+        for i, file_path in enumerate(processable_files):
+            if progress_callback is not None:
+                progress_callback(i + 1, total_files, file_path)
+            results[file_path] = self.extract_text_entries(file_path)
+
             # Yield GIL every 5 files to keep UI responsive during large scans
             if i % 5 == 0:
                 time.sleep(0.001)
@@ -1671,6 +1728,34 @@ class RenPyParser:
             return True
 
         return False
+
+    def _is_in_manual_exclude_dirs(
+        self,
+        file_path: Path,
+        search_root: Path,
+        exclude_dirs: Optional[List[str]] = None,
+    ) -> bool:
+        """Return whether the file is inside one of the manually excluded root dirs."""
+        if not exclude_dirs:
+            return False
+
+        normalized_excludes = {
+            str(item).replace("\\", "/").strip("/").lower()
+            for item in exclude_dirs
+            if str(item).strip()
+        }
+        if not normalized_excludes:
+            return False
+
+        try:
+            rel_parts = [part.lower() for part in file_path.relative_to(search_root).parts[:-1]]
+        except Exception:
+            return False
+
+        if not rel_parts:
+            return False
+
+        return rel_parts[0] in normalized_excludes
 
     def _read_file_lines(self, file_path: Union[str, Path]) -> List[str]:
         text = read_text_safely(Path(file_path))
@@ -1855,18 +1940,6 @@ class RenPyParser:
         if not text:
             return None
         
-        # Set state for context-aware filtering used in following checks
-        self._current_context_line = context_line or ""
-        
-        if not self.is_meaningful_text(text):
-            return None
-        
-        # Skip text inside hidden labels (label xxx hide:)
-        if self._is_hidden_context(context_path):
-            return None
-
-        processed_text, placeholder_map = self.preserve_placeholders(text)
-
         resolved_type = text_type or self.determine_text_type(
             text,
             context_line,
@@ -1874,6 +1947,23 @@ class RenPyParser:
         )
         if self._is_python_context(context_path):
             resolved_type = 'renpy_func'
+
+        # Set state for context-aware filtering used in following checks
+        self._current_context_line = context_line or ""
+        
+        if not self._is_force_translatable_text(
+            text=text,
+            resolved_type=resolved_type,
+            context_line=context_line,
+            context_path=context_path,
+        ) and not self.is_meaningful_text(text):
+            return None
+        
+        # Skip text inside hidden labels (label xxx hide:)
+        if self._is_hidden_context(context_path):
+            return None
+
+        processed_text, placeholder_map = self.preserve_placeholders(text)
         
         # Context-based type correction: if context_path indicates screen/menu,
         # override generic types like 'dialogue' with the correct category.
@@ -1910,6 +2000,54 @@ class RenPyParser:
             if ctx_lower.startswith('python'):
                 return True
         return False
+
+    def _is_standard_renpy_ui_text(self, text: str) -> bool:
+        return text.strip() in STANDARD_RENPY_STRINGS
+
+    def _is_force_translatable_text(
+        self,
+        *,
+        text: str,
+        resolved_type: str,
+        context_line: str,
+        context_path: List[str],
+    ) -> bool:
+        text_strip = text.strip()
+        if not text_strip:
+            return False
+
+        if self._is_standard_renpy_ui_text(text_strip):
+            return True
+
+        if resolved_type == TextType.MENU_CHOICE and HOTKEY_SOURCE_RE.match(text_strip):
+            lowered_line = (context_line or '').lower()
+            if any(token in lowered_line for token in ('"option"', '"submenu"', '"exit"', '"button"')):
+                return True
+
+        if resolved_type != 'translatable_string':
+            return False
+
+        lowered_line = (context_line or '').lower()
+        lowered_ctx = [(ctx or '').lower() for ctx in context_path or [] if ctx]
+        in_ui_context = (
+            any(ctx.startswith('screen') or ctx.startswith('menu') for ctx in lowered_ctx)
+            or any(
+                token in lowered_line
+                for token in (
+                    'textbutton',
+                    'window title',
+                    'button',
+                    'tooltip',
+                    'caption',
+                    'prompt',
+                    'quick_menu',
+                )
+            )
+        )
+        if not in_ui_context:
+            return False
+
+        return any(ch.isalpha() for ch in text_strip)
     
     def _is_hidden_context(self, context_path: List[str]) -> bool:
         """Check if we're inside a hidden label (should not be translated)"""
@@ -2024,6 +2162,8 @@ class RenPyParser:
         # Optimization: Prevent regex engine freeze (ReDoS) on massive strings
         if not text or len(text) > 4096:
             return False
+        if self._is_standard_renpy_ui_text(text):
+            return True
             
         # Crash Prevention: Reject file paths, URLs, and asset names immediately
         # Using fast string checks before regex
@@ -3139,7 +3279,11 @@ class RenPyParser:
     # ========== END AST-BASED DEEP SCAN ==========
 
     
-    def deep_scan_strings(self, file_path: Union[str, Path]) -> List[Dict[str, Any]]:
+    def deep_scan_strings(
+        self,
+        file_path: Union[str, Path],
+        normal_entries: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Dosyadaki TÜM string literal'leri tarar.
         Normal pattern'lerin kaçırdığı metinleri bulmak için kullanılır.
@@ -3164,7 +3308,7 @@ class RenPyParser:
         already_found: Set[Tuple[str,str]] = set()
         
         # Normal pattern'lerle bulunanları al (bunları atlamak için)
-        normal_entries = self.extract_text_entries(file_path)
+        normal_entries = normal_entries if normal_entries is not None else self.extract_text_entries(file_path)
         for entry in normal_entries:
             normalized = entry.get('processed_text') or entry.get('text')
             ctx = (entry.get('context_path') or ['deep_scan'])[0]
@@ -3513,7 +3657,7 @@ class RenPyParser:
         seen_texts = {e.get('text', '') for e in entries}
         
         if include_deep_scan:
-            deep_entries = self.deep_scan_strings(file_path)
+            deep_entries = self.deep_scan_strings(file_path, normal_entries=entries)
             for entry in deep_entries:
                 if entry.get('text') not in seen_texts:
                     entries.append(entry)
@@ -3536,7 +3680,9 @@ class RenPyParser:
         self,
         directory: Union[str, Path],
         include_deep_scan: bool = True,
-        recursive: bool = True
+        recursive: bool = True,
+        exclude_dirs: Optional[List[str]] = None,
+        progress_callback: Optional[Callable[[int, int, Path], None]] = None,
     ) -> Dict[Path, List[Dict[str, Any]]]:
         """
         Klasördeki tüm dosyaları deep scan ile tara.
@@ -3558,7 +3704,12 @@ class RenPyParser:
         else:
             iterator = list(search_root.glob("*.rpy")) + list(search_root.glob("*.RPY"))
         
-        rpy_files = [f for f in iterator if not self._is_excluded_rpy(f, search_root)]
+        rpy_files = [
+            f
+            for f in iterator
+            if not self._is_excluded_rpy(f, search_root)
+            and not self._is_in_manual_exclude_dirs(f, search_root, exclude_dirs)
+        ]
         
         self.logger.info(
             "Deep scan: Found %s .rpy files for processing",
@@ -3566,13 +3717,18 @@ class RenPyParser:
             len(rpy_files),
         )
         
-        for rpy_file in rpy_files:
+        total_files = len(rpy_files)
+        for index, rpy_file in enumerate(rpy_files, start=1):
             try:
+                if progress_callback is not None:
+                    progress_callback(index, total_files, rpy_file)
                 entries = self.extract_with_deep_scan(rpy_file, include_deep_scan, include_ast_scan=include_deep_scan)
                 results[rpy_file] = entries
             except Exception as exc:
                 self.logger.error("Error in deep scan for %s: %s", rpy_file, exc)
                 results[rpy_file] = []
+            if index % 5 == 0:
+                time.sleep(0.001)
         
         total_normal = sum(
             len([e for e in entries if not e.get('is_deep_scan')])
@@ -3652,7 +3808,8 @@ class RenPyParser:
         include_rpyc: bool = False,
         include_deep_scan: bool = False,
         recursive: bool = True,
-        exclude_dirs: Optional[List[str]] = None
+        exclude_dirs: Optional[List[str]] = None,
+        progress_callback: Optional[Callable[[int, int, Path], None]] = None,
     ) -> Dict[Path, List[Dict[str, Any]]]:
         """
         Hem .rpy hem .rpyc dosyalarından metin çıkar.
@@ -3676,7 +3833,9 @@ class RenPyParser:
             rpy_results = self.extract_from_directory_with_deep_scan(
                 directory,
                 include_deep_scan=include_deep_scan,
-                recursive=recursive
+                recursive=recursive,
+                exclude_dirs=exclude_dirs,
+                progress_callback=progress_callback,
             )
             for file_path, entries in rpy_results.items():
                 results[file_path] = entries

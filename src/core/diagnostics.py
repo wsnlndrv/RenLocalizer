@@ -19,6 +19,9 @@ class FileReport:
     written: int = 0
     skipped: int = 0
     unchanged: int = 0
+    blocked: int = 0
+    recovered_retry: int = 0
+    recovered_variant: int = 0
     entries: List[Dict[str, Any]] = field(default_factory=list)
 
 
@@ -31,6 +34,10 @@ class DiagnosticReport:
     total_written: int = 0
     total_skipped: int = 0
     total_unchanged: int = 0
+    total_unchanged_by_engine: int = 0
+    total_blocked_as_corrupted: int = 0
+    total_recovered_by_retry: int = 0
+    total_recovered_by_synthesized_variant: int = 0
     files: Dict[str, FileReport] = field(default_factory=dict)
 
     def add_extracted(self, file_path: str, entry: Dict[str, Any]):
@@ -49,7 +56,13 @@ class DiagnosticReport:
         fr.entries.append(rec)
         self.total_extracted += 1
 
-    def mark_translated(self, file_path: str, translation_id: str, translated_text: str, original_text: str = None):
+    def mark_translated(
+        self,
+        file_path: str,
+        translation_id: str,
+        translated_text: str,
+        original_text: str = None,
+    ) -> None:
         fr = self.files.get(file_path)
         if not fr:
             fr = FileReport(file_path=file_path)
@@ -61,7 +74,7 @@ class DiagnosticReport:
         fr.entries.append(rec)
         self.total_translated += 1
 
-    def mark_written(self, file_path: str, translation_id: str):
+    def mark_written(self, file_path: str, translation_id: str) -> None:
         fr = self.files.get(file_path)
         if not fr:
             fr = FileReport(file_path=file_path)
@@ -70,7 +83,7 @@ class DiagnosticReport:
         fr.entries.append({'translation_id': translation_id, 'status': 'written'})
         self.total_written += 1
 
-    def mark_skipped(self, file_path: str, reason: str, entry: Dict[str, Any] = None):
+    def mark_skipped(self, file_path: str, reason: str, entry: Dict[str, Any] = None) -> None:
         fr = self.files.get(file_path)
         if not fr:
             fr = FileReport(file_path=file_path)
@@ -82,7 +95,13 @@ class DiagnosticReport:
         fr.entries.append(rec)
         self.total_skipped += 1
 
-    def mark_unchanged(self, file_path: str, translation_id: str, original_text: str = None):
+    def mark_unchanged(
+        self,
+        file_path: str,
+        translation_id: str,
+        original_text: str = None,
+        reason: str | None = None,
+    ) -> None:
         fr = self.files.get(file_path)
         if not fr:
             fr = FileReport(file_path=file_path)
@@ -91,8 +110,68 @@ class DiagnosticReport:
         rec = {'translation_id': translation_id, 'status': 'unchanged'}
         if original_text is not None:
             rec['original_text'] = original_text
+        if reason:
+            rec['reason'] = reason
         fr.entries.append(rec)
         self.total_unchanged += 1
+        if reason == 'unchanged_core_ui':
+            self.total_unchanged_by_engine += 1
+
+    def mark_blocked(
+        self,
+        file_path: str,
+        translation_id: str,
+        reason: str,
+        *,
+        original_text: str | None = None,
+        translated_text: str | None = None,
+    ) -> None:
+        fr = self.files.get(file_path)
+        if not fr:
+            fr = FileReport(file_path=file_path)
+            self.files[file_path] = fr
+        fr.blocked += 1
+        rec: Dict[str, Any] = {
+            'translation_id': translation_id,
+            'status': 'blocked',
+            'reason': reason,
+        }
+        if original_text is not None:
+            rec['original_text'] = original_text
+        if translated_text is not None:
+            rec['translated_text'] = translated_text
+        fr.entries.append(rec)
+        self.total_blocked_as_corrupted += 1
+
+    def mark_recovered(
+        self,
+        file_path: str,
+        translation_id: str,
+        reason: str,
+        *,
+        original_text: str | None = None,
+        translated_text: str | None = None,
+    ) -> None:
+        fr = self.files.get(file_path)
+        if not fr:
+            fr = FileReport(file_path=file_path)
+            self.files[file_path] = fr
+        rec: Dict[str, Any] = {
+            'translation_id': translation_id,
+            'status': 'recovered',
+            'reason': reason,
+        }
+        if original_text is not None:
+            rec['original_text'] = original_text
+        if translated_text is not None:
+            rec['translated_text'] = translated_text
+        fr.entries.append(rec)
+        if reason == 'retry':
+            fr.recovered_retry += 1
+            self.total_recovered_by_retry += 1
+        elif reason == 'synthesized_variant':
+            fr.recovered_variant += 1
+            self.total_recovered_by_synthesized_variant += 1
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -104,6 +183,10 @@ class DiagnosticReport:
                 'written': self.total_written,
                 'skipped': self.total_skipped,
                 'unchanged': self.total_unchanged,
+                'unchanged_by_engine': self.total_unchanged_by_engine,
+                'blocked_as_corrupted': self.total_blocked_as_corrupted,
+                'recovered_by_retry': self.total_recovered_by_retry,
+                'recovered_by_synthesized_variant': self.total_recovered_by_synthesized_variant,
             },
             'files': {p: {
                 'extracted': fr.extracted,
@@ -111,6 +194,9 @@ class DiagnosticReport:
                 'written': fr.written,
                 'skipped': fr.skipped,
                 'unchanged': fr.unchanged,
+                'blocked': fr.blocked,
+                'recovered_retry': fr.recovered_retry,
+                'recovered_variant': fr.recovered_variant,
                 'entries': fr.entries,
             } for p, fr in self.files.items()}
         }

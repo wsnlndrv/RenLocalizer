@@ -705,6 +705,15 @@ class SettingsBackend(QObject):
     def setShowDebugEngines(self, enabled: bool):
         self.config.translation_settings.show_debug_engines = enabled
         self.config.save_config()
+
+    @pyqtSlot(result=bool)
+    def getRuntimeStringDiagnostics(self) -> bool:
+        return getattr(self.config.translation_settings, 'runtime_string_diagnostics', False)
+
+    @pyqtSlot(bool)
+    def setRuntimeStringDiagnostics(self, enabled: bool):
+        self.config.translation_settings.runtime_string_diagnostics = enabled
+        self.config.save_config()
     
     @pyqtSlot(result=bool)
     def getExcludeSystemFolders(self) -> bool:

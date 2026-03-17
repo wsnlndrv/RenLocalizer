@@ -58,7 +58,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfuse2 imagemagick \
+          sudo apt-get install -y libfuse2 imagemagick xvfb \
             libgl1 libegl1 libxkbcommon-x11-0 libdbus-1-3 \
             libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
             libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 \
@@ -75,6 +75,38 @@ jobs:
       - name: Build with PyInstaller
         run: |
           pyinstaller RenLocalizer.spec
+
+      - name: Smoke test Qt startup (Linux native)
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          env = dict(os.environ, RENLOCALIZER_QT_SMOKE_TEST="1")
+          subprocess.run(
+              ["xvfb-run", "-a", "./dist/RenLocalizer/RenLocalizer"],
+              env=env,
+              check=True,
+              timeout=60,
+          )
+          PY
+
+      - name: Smoke test Qt startup (Linux software fallback)
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          env = dict(
+              os.environ,
+              RENLOCALIZER_QT_SMOKE_TEST="1",
+              RENLOCALIZER_QT_RENDER_MODE="software",
+          )
+          subprocess.run(
+              ["xvfb-run", "-a", "./dist/RenLocalizer/RenLocalizer"],
+              env=env,
+              check=True,
+              timeout=60,
+          )
+          PY
 
       - name: Convert icon
         run: |
@@ -124,27 +156,46 @@ jobs:
           cp build/linux/renlocalizer.desktop RenLocalizer.AppDir/usr/share/applications/
           cp renlocalizer.png RenLocalizer.AppDir/usr/share/icons/hicolor/256x256/apps/renlocalizer.png
           
-          # Create fontconfig snippet so the bundled emoji font is discovered
-          mkdir -p RenLocalizer.AppDir/usr/bin/RenLocalizer/fontconfig
-          FCFILE="RenLocalizer.AppDir/usr/bin/RenLocalizer/fontconfig/fonts.conf"
-          printf '<?xml version="1.0"?>\n' > "$FCFILE"
-          printf '<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n' >> "$FCFILE"
-          printf '<fontconfig>\n' >> "$FCFILE"
-          printf '  <!-- System fonts -->\n' >> "$FCFILE"
-          printf '  <dir>/usr/share/fonts</dir>\n' >> "$FCFILE"
-          printf '  <dir>/usr/local/share/fonts</dir>\n' >> "$FCFILE"
-          printf '  <dir prefix="xdg">fonts</dir>\n' >> "$FCFILE"
-          printf '  <!-- AppImage bundled emoji font -->\n' >> "$FCFILE"
-          printf '  <dir>APPDIR_FONTS</dir>\n' >> "$FCFILE"
-          printf '  <cachedir prefix="xdg">fontconfig</cachedir>\n' >> "$FCFILE"
-          printf '</fontconfig>\n' >> "$FCFILE"
-          
           # Download appimagetool
           wget -q "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" -O appimagetool
           chmod +x appimagetool
           
           # Build AppImage
           ARCH=x86_64 ./appimagetool --appimage-extract-and-run RenLocalizer.AppDir RenLocalizer-Linux-x64.AppImage
+          chmod +x RenLocalizer-Linux-x64.AppImage
+
+      - name: Smoke test AppImage startup (Linux native)
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          env = dict(os.environ, RENLOCALIZER_QT_SMOKE_TEST="1", APPIMAGE_EXTRACT_AND_RUN="1")
+          subprocess.run(
+              ["xvfb-run", "-a", "./RenLocalizer-Linux-x64.AppImage"],
+              env=env,
+              check=True,
+              timeout=60,
+          )
+          PY
+
+      - name: Smoke test AppImage startup (Linux software fallback)
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          env = dict(
+              os.environ,
+              RENLOCALIZER_QT_SMOKE_TEST="1",
+              RENLOCALIZER_QT_RENDER_MODE="software",
+              APPIMAGE_EXTRACT_AND_RUN="1",
+          )
+          subprocess.run(
+              ["xvfb-run", "-a", "./RenLocalizer-Linux-x64.AppImage"],
+              env=env,
+              check=True,
+              timeout=60,
+          )
+          PY
 
       - name: Create tar.gz (Linux Portable)
         run: |
@@ -168,7 +219,15 @@ jobs:
   # macOS Build → DMG
   # ============================================
   build-macos:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            artifact_suffix: arm64
+          - runner: macos-15-intel
+            artifact_suffix: intel
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -193,6 +252,38 @@ jobs:
           chmod +x build/macos/create_app_bundle.sh
           ./build/macos/create_app_bundle.sh dist/RenLocalizer RenLocalizer.app
 
+      - name: Smoke test Qt startup (macOS native)
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          env = dict(os.environ, RENLOCALIZER_QT_SMOKE_TEST="1")
+          subprocess.run(
+              ["./RenLocalizer.app/Contents/MacOS/launch"],
+              env=env,
+              check=True,
+              timeout=60,
+          )
+          PY
+
+      - name: Smoke test Qt startup (macOS software fallback)
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          env = dict(
+              os.environ,
+              RENLOCALIZER_QT_SMOKE_TEST="1",
+              RENLOCALIZER_QT_RENDER_MODE="software",
+          )
+          subprocess.run(
+              ["./RenLocalizer.app/Contents/MacOS/launch"],
+              env=env,
+              check=True,
+              timeout=60,
+          )
+          PY
+
       - name: Create DMG
         run: |
           # Create a temporary DMG directory with the .app
@@ -212,13 +303,13 @@ jobs:
             -srcfolder dmg_contents \
             -ov \
             -format UDZO \
-            RenLocalizer-macOS.dmg
+            RenLocalizer-macOS-${{ matrix.artifact_suffix }}.dmg
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-build
-          path: RenLocalizer-macOS.dmg
+          name: macos-build-${{ matrix.artifact_suffix }}
+          path: RenLocalizer-macOS-${{ matrix.artifact_suffix }}.dmg
 
   # ============================================
   # Create GitHub Release
@@ -244,10 +335,15 @@ jobs:
         with:
           name: linux-build-targz
 
-      - name: Download macOS artifact
+      - name: Download macOS arm64 artifact
         uses: actions/download-artifact@v4
         with:
-          name: macos-build
+          name: macos-build-arm64
+
+      - name: Download macOS Intel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-build-intel
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -256,7 +352,8 @@ jobs:
             RenLocalizer-Windows-x64.zip
             RenLocalizer-Linux-x64.AppImage
             RenLocalizer-Linux-x64.tar.gz
-            RenLocalizer-macOS.dmg
+            RenLocalizer-macOS-arm64.dmg
+            RenLocalizer-macOS-intel.dmg
           body: ""
           draft: false
           prerelease: false

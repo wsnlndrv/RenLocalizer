@@ -1,40 +1,56 @@
-# 🛡️ Technical String Filtering
+# 🛡️ Technical String Filtering & Syntax Guard
 
-Ren'Py files are a mix of dialogue and technical code. To prevent breaking the game, RenLocalizer uses a multi-layered filtering system.
-
----
-
-## 🔹 Placeholder Protection
-Ren'Py uses `[variables]` and `{tags}` for logic and styling.
-*   **Target:** `[player_name]`, `[persistent.day]`, `{b}Text{/b}`.
-*   **Mechanism:** Before translation, RenLocalizer replaces these with unique tokens (e.g., `?V001?`). After translation, it restores the exact original code.
-
-## 🔹 Technical Keyword Filter
-The system automatically skips internal Ren'Py keywords that might look like strings:
-*   `renpy.dissolve`
-*   `gui.text_font`
-*   `config.version`
-*   `persistent.save_slot`
-
-## 🔹 Heuristic "Symbol Density"
-RenLocalizer analyzes the ratio of special symbols (dots, underscores, brackets) in a string.
-*   **Technical High Density:** `path.to.my_file[0]` (Skipped).
-*   **Human Low Density:** `Hello, how are you?` (Translated).
+Ren'Py files are a mix of human dialogue and technical Python code. To ensure game stability, RenLocalizer uses a multi-layered filtering and protection system.
 
 ---
 
-## ⚠️ Common Scenarios
-
-### **Unwanted Translation (False Positive)**
-If a piece of code *is* being translated when it shouldn't:
-1.  Open the **Glossary Editor**.
-2.  Add the code as both Source and Target (e.g., `sys_path` -> `sys_path`).
-3.  This protects it from the translation engine.
-
-### **Missing Translation (False Negative)**
-If a button or menu item is being ignored:
-1.  Check **Settings > Text Types**.
-2.  Ensure "Translate Buttons" or "Translate UI" is enabled.
+## 🔹 1. Identification (Filtering)
+Not every string should be translated. RenLocalizer uses **Heuristic Analysis** to decide:
+*   **Deny-list:** Skips paths (`.png`, `.rpy`), colors (`#fff`), and engine internals (`config.*`, `gui.*`).
+*   **Symbol Density:** If a string has too many underscores, dots, or brackets (e.g., `sys.path_manager.load_asset`), it is marked as technical and skipped.
+*   **DATA_KEY_WHITELIST:** Only extracts strings assigned to high-probability keys like `name`, `title`, `desc`, or `msg`.
 
 ---
-> 💡 **Tip:** Use the **Deep Scan** feature for a much more thorough (but slower) AST-based scan of technical strings.
+
+## 🔹 2. Protection (Syntax Guard v4.0)
+Before sending a valid string to a translation engine (Google, GPT, DeepL), RenLocalizer "masks" the Ren'Py code to prevent the AI from translating it.
+
+### 💎 Unicode Tokenization (The Standard)
+RenLocalizer converts code to **Legacy-Proof Unicode Tokens**:
+- Original: `Hello [player_name], click {b}here{/b}!`
+- Masked: `Hello ⟦RLPH_0⟧, click ⟦RLPH_1⟧here⟦RLPH_2⟧!`
+
+**Why?**
+- Most AI models recognize `[` as a character to translate, but they treat `⟦` (Unicode Mathematical Brackets) as atomic units they shouldn't touch.
+- It prevents `[name]` from being translated to `[isim]` or `[اسم]`.
+
+### 🛡️ Recovery & Healing
+If an AI engine returns a corrupted token, the **Surgical Healing** logic kicks in:
+*   **Spaced Recovery:** `⟦ RLPH _ 0 ⟧` → `⟦RLPH_0⟧`
+*   **Translit Recovery:** `[RLPH_0]` (if brackets were changed)
+*   **Integrity Validation:** If a variable is lost during translation, RenLocalizer detects it and falls back to the original text to prevent a game crash.
+
+---
+
+## 🔹 3. HTML Mode (Cloud API)
+When using professional APIs like **Gemini** or **DeepL**, RenLocalizer can use **HTML Mode**:
+- Logic: Code is wrapped in `<span class="notranslate">` tags.
+- Benefit: Professional APIs follow these standards strictly, providing the most reliable results.
+
+---
+
+## ⚠️ Troubleshooting False Positives
+
+### **If code IS being translated (breaking the game):**
+1.  Navigate to the **Glossary** page.
+2.  Add the specific code word as both **Source** and **Target** (e.g., `my_variable` -> `my_variable`).
+3.  RenLocalizer will now "protect" this word globally.
+
+### **If text is NOT being translated:**
+1.  Check the **Diagnostics** report in the game folder.
+2.  Ensure the relevant **Text Tier** is enabled in Settings (e.g., "Deep Extraction" for hidden strings).
+
+---
+> 🔗 **Related Pages:**
+> * [[Advanced-Parsing]] — The extraction logic.
+> * [[Glossary-Management]] — Manual protection rules.

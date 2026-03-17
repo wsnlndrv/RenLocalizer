@@ -10,18 +10,27 @@ file structures instead of runtime JSON injection.
 
 import os
 import json
+import re
 import logging
 from pathlib import Path
 from src.utils.encoding import save_text_safely
 
 logger = logging.getLogger(__name__)
 
+def _resolve_game_dir(project_path: str) -> str:
+    """Accept either the project root or the game directory itself."""
+    normalized_path = os.path.normpath(project_path)
+    if os.path.basename(normalized_path).lower() == "game" and os.path.isdir(normalized_path):
+        return normalized_path
+    return os.path.join(normalized_path, "game")
+
+
 def export_strings_to_rpy(project_path: str, target_lang: str) -> bool:
     """
     Reads translations and exports them as standard Ren'Py translation blocks.
-    Now supports splitting by source file to prevent duplicate definitions.
+    Accepts either the project root or the game directory itself.
     """
-    game_dir = os.path.join(project_path, "game")
+    game_dir = _resolve_game_dir(project_path)
     tl_dir = os.path.join(game_dir, "tl", target_lang)
     json_path = os.path.join(tl_dir, "strings.json")
     

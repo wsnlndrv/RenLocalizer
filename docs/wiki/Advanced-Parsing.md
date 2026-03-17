@@ -4,115 +4,72 @@ RenLocalizer uses a sophisticated multi-stage pipeline to extract text without b
 
 ---
 
-## 🔹 1. Traditional Regex Parsing
+## 🔹 1. Traditional Regex Parsing (Layer 1)
 The first layer of scanning uses highly optimized Regular Expressions to find standard Ren'Py dialogue and UI strings:
 *   **Dialogue:** `character_name "Dialogue text"`
-*   **Direct strings:** `_("Text")` or `"Text"`
-*   **Menu items:** `menu:` choice blocks.
+*   **Narration:** `"Indented dialogue without a name"`
+*   **Menu items:** `menu:` choice blocks and captions.
 
-## 🔹 2. AST (Abstract Syntax Tree) Scanning
-When simple patterns aren't enough, RenLocalizer analyzes the script's structure using Python's `ast` module.
+## 🔹 2. AST (Abstract Syntax Tree) Scanning (Layer 2)
+When simple patterns aren't enough (like in `init python` blocks), RenLocalizer analyzes the script's structure using Python's `ast` module.
 *   **Capabilities:**
-    *   Finds strings inside nested functions.
-    *   Extracts text from `init python` blocks.
-    *   Distinguishes between technical code and translatable content.
+    *   Finds strings inside nested functions (`renpy.say`, `renpy.notify`).
+    *   Extracts text from complex variable assignments.
+    *   Distinguishes between technical code and translatable content using context.
 
-## 🔹 3. RPYC & RPYMC Readers
-Many "obfuscated" games hide their source code by deleting `.rpy` files.
-*   **RPYC Reader:** "Unpickles" binary RPYC files to extract the original logic. You can translate a game even if the source code is missing!
-*   **RPYMC Reader:** Handles screen cache files, ensuring complex UI elements are localized.
+## 🔹 3. RPYC & RPYMC Readers (The Binary Bridge)
+Many games hide their source code by deleting `.rpy` files.
+*   **RPYC Reader:** "Unpickles" binary RPYC files to extract the original logic trees. You can translate a game even if the source code (`.rpy`) is missing!
+*   **RPYMC Reader:** Handles screen cache files, ensuring complex UI elements in screens are localized.
 
-## 🔹 4. Deep Scan Technology
-Enable **Deep Scan** in settings to trigger a recursive analysis of the entire project.
-*   **What it finds:** Variable assignments and list items used as game text that don't follow standard `_()` markers.
-*   **Safety:** Uses a "Technical String Filter" to skip engine internals like `renpy.dissolve`.
+## 🔹 4. Deep Extraction Engine (v2.7.4 Standard)
+An advanced extension that captures previously "invisible" text stored in variables or complex data structures.
 
----
-
-## 🔹 4b. Deep Extraction Engine *(v2.7.1)*
-An advanced extension of Deep Scan that captures previously invisible text:
-
-### Tier Classification
+### Tier Classification (Deep Extraction Logic)
 | Tier | Purpose | Examples |
 |------|---------|----------|
-| **Tier-1** (16 calls) | Always-text API calls | `renpy.notify`, `renpy.confirm`, `Character`, `Text`, `ui.text` |
-| **Tier-2** (4 calls) | Contextual UI calls | `QuickSave`, `CopyToClipboard`, `FilePageNameInputValue`, `Help` |
-| **Tier-3** (30+ calls) | **Blacklist** — never extract | `Jump`, `Call`, `Show`, `Hide`, `Play`, `SetVariable` |
+| **Tier-1** | Always-text API calls | `renpy.notify`, `Character("Name")`, `Text("...")` |
+| **Tier-2** | Contextual UI calls | `QuickSave(message="...")`, `CopyToClipboard("...")` |
+| **Tier-3** | **Blacklist** (Safe-skip) | `Jump`, `Play`, `SetVariable`, `OpenURL` |
 
 ### Variable Name Heuristics
-**DeepVariableAnalyzer** scores variable names 0.0–1.0 to decide extraction:
-*   ✅ `quest_title` → translatable (suffix `_title`)
-*   ✅ `config.name` → translatable (exact match)
-*   ❌ `persistent.flags` → non-translatable (namespace `persistent`)
-*   ❌ `audio_volume` → non-translatable (prefix `audio_`)
+**DeepVariableAnalyzer** scores variable names to decide if they contain text:
+*   ✅ `quest_title`, `chapter_name`, `npc_msg` (Likely text)
+*   ❌ `img_path`, `audio_vol`, `persistent.flags` (Technical/System)
 
 ### New Extraction Targets
-*   **Bare define/default:** `define quest_title = "text"` without `_()` wrapper
-*   **f-string templates:** `f"Welcome back, {player}!"` → `"Welcome back, [player]!"`
-*   **Multi-line structures:** Dict/list with `title`, `desc`, `name` keys
-*   **Tooltip properties:** `tooltip "hint text"` in screen language
-*   **Extended API calls:** `QuickSave(message=...)`, `CopyToClipboard(...)`, `narrator(...)`, `renpy.display_notify(...)`
-
-### False Positive Prevention
-15 compiled regex patterns filter technical strings: file paths, hex colors, URLs, snake_case identifiers, CONSTANT_NAMES, etc.
-
-### Config Toggles
-Seven granular settings in `config.json` for full control over what gets extracted.
-
-> 📖 See [Deep Extraction Design](Deep-Extraction-Design) for architecture details.
+*   **Bare define/default:** `define quest_title = "text"` (without requiring `_()`).
+*   **f-string templates:** `f"Welcome back, {player}!"` becomes `"Welcome back, [player]!"`.
+*   **Tooltip properties:** Extracts `tooltip "hint text"` directly from screen code.
 
 ---
 
-## 🔹 5. Text Types Filter
-Categorize and select exactly what you want to translate in **Settings > Text Types**:
-
-*   📌 **Core:** Dialogue, Menus, Buttons.
-*   📌 **Interface:** UI text, Input fields, Alt text.
-*   📌 **System:** Notifications, Confirmation dialogs.
-*   📌 **Config:** Game title, Version strings.
+## 🔹 5. Smart Data Path (v2.7.4)
+RenLocalizer now manages data paths intelligently:
+*   **Portable Mode:** Keeps all translations (`cache/`), settings (`config.json`), and logs in the application folder.
+*   **Migration:** Automatically moves your old data to the new structure if you switch modes.
 
 ---
 
-## 🔹 6. Normalization & Encoding
-RenLocalizer automatically detects file encodings and normalizes them to **UTF-8 with BOM**. 
-> 🛡️ **Benefit:** Prevents "Mojibake" (broken characters) in languages like Russian, Chinese, or Japanese.
+## 🔹 6. Syntax Guard (v4.0 Standard)
+Our "Civilian-to-Military" grade protection system ensures AI translators (Google, OpenAI, Gemini) don't break your code.
+
+### 🛡️ Core Protection Layers
+1.  **Unicode Tokenization:** Replaces `[var]` with unbreakable tokens like `⟦RLPH_0⟧`. Google Translate cannot translate or corrupt these unique Unicode brackets.
+2.  **HTML Mode:** For Cloud APIs (DeepL/Gemini), it uses valid HTML tags to hide code.
+3.  **Spaced Token Recovery:** If an engine returns `⟦ RLPH _ 0 ⟧` (adding spaces), RenLocalizer automatically heals and restores the original code.
 
 ---
 
-## 🔹 7. ID Stability (v3 Engine)
-Introduced in v2.6.0, this technology ensures that translations remain linked to the correct code block even if the script files are modified.
-*   **Deterministic Hashing:** Instead of relying on line numbers (which change when you add/remove code), it generates unique IDs based on Ren'Py's internal `Label ID` mapping and the original text content.
-*   **Advantage:** Perfect for "External AI Translation" (Export/Import) workflow. You can keep developing your game while someone else translates the JSON files.
+## 🔹 7. Force Runtime Translation (Hook)
+Injected via `zzz_renlocalizer_runtime.rpy`, this script catches dynamic strings *as they are displayed* in the game, ensuring a 100% translation even for hard-coded Python text.
 
 ---
 
-## 🔹 8. Force Runtime Translation (Hook)
-Sometime Ren'Py source code contains dynamic strings that are not wrapped in `_()` or `!t` flags. These strings often appear untranslated in games even after processing.
-
-*   **How it Works:** 
-    *   RenLocalizer injects a small script (`zzz_renlocalizer_runtime.rpy`) into the game folder.
-    *   This script uses a **Dual-Hook Strategy:**
-        1.  `config.say_menu_text_filter` — Catches text *before* variable substitution.
-        2.  `config.replace_text` — Catches text *after* rendering.
-    *   Every time a string is displayed, it checks if a translation exists in the current language files.
-*   **When to Use:** Use this if you see quest descriptions, item names, or dynamic UI elements that remain untranslated.
-*   **How to Enable:** **Tools > Runtime Hook Generator** or enable "Auto Hook Gen" in Settings.
+> [!TIP]
+> Always enable **RPYC Reader** if you don't see any `.rpy` files in the game folder. It's the most powerful way to unlock a project.
 
 ---
-
-## 🔹 9. Syntax Guard v3.1 (Hybrid Strategy)
-RenLocalizer employs a military-grade syntax protection system to prevent AI translators (Google, DeepL, LLMs) from breaking your game code.
-
-### 🛡️ Three Layers of Defense
-1.  **Wrapper Tag Removal:** Outer tags like `{i}...{/i}` are surgically removed *before* translation and re-attached *after*. This prevents the AI from translating `i` to `Ben` or moving the tags to the wrong place.
-2.  **Placeholder Masking:** Internal tags and variables are converted to unbreakable tokems:
-    *   `[variable]` → `XRPYXVAR0XRPYX`
-    *   `save slot %s` → `save slot XRPYXFMT1XRPYX` (New in v2.6.4!)
-    *   This ensures Google sees "XRPYX..." (a made-up word) instead of code, preventing hallucinations.
-3.  **Bracket Healing (Cerrah):** A final post-processing step that fixes specific corruptions caused by Neural Machine Translation quirks:
-    *   `[ [text]` → `[[text]` (Fixes detailed parsing of double brackets)
-    *   `[ var ]` → `[var]` (Removes illegal spaces)
-    *   `[list [ 1 ] ]` → `[list[1]]` (Repairs nested variable access)
-
-> **Why "Hybrid"?** It combines the safety of removing tags (Layer 1) with the precision of masking (Layer 2) and the robustness of regex repair (Layer 3).
-
+> 🔗 **Related Pages:**
+> * [[Deep-Extraction-Design]] — Detailed technical design.
+> * [[Technical-Filtering]] — How strings are validated.

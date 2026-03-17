@@ -283,7 +283,7 @@ Rectangle {
                 CheckBox {
                     id: tlProxyCheck
                     text: (backend.uiTrigger, backend.getTextWithDefault("proxy_enabled", "Use Proxy"))
-                    checked: settingsBackend.getProxyEnabled()
+                    checked: settingsBackend ? settingsBackend.getProxyEnabled() : false
                     Material.accent: root.Material.accent
                 }
             }

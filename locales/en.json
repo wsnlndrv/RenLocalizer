@@ -112,6 +112,8 @@
     "debug_mode_label": "Debug Mode",
     "debug_mode_tooltip": "Show extra debugging information for developers",
     "debugging_group": "Debugging",
+    "runtime_string_diagnostics": "Log Missed Runtime Strings",
+    "runtime_string_diagnostics_desc": "Write bounded diagnostics for runtime text that stays untranslated. Useful for sandbox games and dynamic UI debugging.",
     "deep_scan": "Deep Scan",
     "deep_scan_desc": "Analyze RPYC files with AST (slower)",
     "deep_scan_group": "Advanced Scan",

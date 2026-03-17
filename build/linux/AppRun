@@ -12,8 +12,13 @@ export LD_LIBRARY_PATH="${APPDIR}/usr/bin/RenLocalizer:${LD_LIBRARY_PATH}"
 export QT_PLUGIN_PATH="${APPDIR}/usr/bin/RenLocalizer/PyQt6/Qt6/plugins"
 export QML2_IMPORT_PATH="${APPDIR}/usr/bin/RenLocalizer/PyQt6/Qt6/qml"
 
-# Force X11 backend if Wayland causes issues (common in AppImages)
-# export QT_QPA_PLATFORM=xcb
+# Prefer XWayland first on mixed Wayland/X11 sessions unless the user has
+# already chosen a Qt platform plugin manually.
+if [ -z "${QT_QPA_PLATFORM:-}" ] && [ -z "${RENLOCALIZER_QT_PLATFORM:-}" ]; then
+    if [ -n "${DISPLAY:-}" ] && [ -n "${WAYLAND_DISPLAY:-}" ]; then
+        export RENLOCALIZER_QT_PLATFORM_HINT="xcb;wayland"
+    fi
+fi
 
 # Ensure XDG paths are sane
 export XDG_DATA_DIRS="${APPDIR}/usr/share:${XDG_DATA_DIRS:-/usr/share}"
@@ -24,10 +29,20 @@ export XDG_DATA_DIRS="${APPDIR}/usr/share:${XDG_DATA_DIRS:-/usr/share}"
 # that lack a color emoji font package.
 BUNDLED_FONTS="${APPDIR}/usr/bin/RenLocalizer/fonts"
 if [ -d "${BUNDLED_FONTS}" ]; then
-    # Patch the fontconfig snippet with the real AppDir fonts path
-    FONTCONF="${APPDIR}/usr/bin/RenLocalizer/fontconfig/fonts.conf"
-    if [ -f "${FONTCONF}" ]; then
-        sed -i "s|APPDIR_FONTS|${BUNDLED_FONTS}|g" "${FONTCONF}" 2>/dev/null || true
+    FONTCONF_DIR="$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/renlocalizer-fonts.XXXXXX" 2>/dev/null || true)"
+    if [ -n "${FONTCONF_DIR}" ] && [ -d "${FONTCONF_DIR}" ]; then
+        FONTCONF="${FONTCONF_DIR}/fonts.conf"
+        cat > "${FONTCONF}" <<EOF
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+<fontconfig>
+  <dir>/usr/share/fonts</dir>
+  <dir>/usr/local/share/fonts</dir>
+  <dir prefix="xdg">fonts</dir>
+  <dir>${BUNDLED_FONTS}</dir>
+  <cachedir prefix="xdg">fontconfig</cachedir>
+</fontconfig>
+EOF
         export FONTCONFIG_FILE="${FONTCONF}"
     fi
 fi

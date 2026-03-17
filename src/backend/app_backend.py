@@ -29,7 +29,7 @@ from src.utils.constants import (
     AI_DEFAULT_TEMPERATURE, AI_DEFAULT_TIMEOUT, MAX_CHARS_PER_REQUEST,
     WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT
 )
-from src.core.runtime_hook_template import RUNTIME_HOOK_TEMPLATE
+from src.core.runtime_hook_template import render_runtime_hook
 from src.core.translator import (
     TranslationManager, TranslationEngine,
     GoogleTranslator, DeepLTranslator, PseudoTranslator
@@ -915,11 +915,13 @@ class AppBackend(QObject):
                 self.logger.warning(f"Failed to generate strings.json in backend: {json_err}")
 
             # 2. Hook Dosyasını Yaz
-            from src.core.runtime_hook_template import RUNTIME_HOOK_TEMPLATE
-            hook_content = (
-                RUNTIME_HOOK_TEMPLATE.replace("{renpy_lang}", renpy_lang)
-                .replace("{{", "{")
-                .replace("}}", "}")
+            hook_content = render_runtime_hook(
+                renpy_lang,
+                runtime_string_diagnostics=getattr(
+                    self.config.translation_settings,
+                    "runtime_string_diagnostics",
+                    False,
+                ),
             )
             
             hook_filename = "zzz_renlocalizer_runtime.rpy"

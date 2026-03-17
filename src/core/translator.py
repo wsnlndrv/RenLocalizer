@@ -2653,10 +2653,55 @@ class TranslationManager:
             if len(self._cache) > self.cache_capacity:
                 self._cache.popitem(last=False)
 
+    def _build_cache_hit_projection(
+        self,
+        req: TranslationRequest,
+        cached: TranslationResult,
+        *,
+        include_request_metadata: bool,
+    ) -> TranslationResult:
+        """Project a cached translation into the active request context."""
+        request_metadata = req.metadata if isinstance(req.metadata, dict) else {}
+        cached_metadata = cached.metadata if isinstance(cached.metadata, dict) else {}
+        projected_metadata: Dict = dict(cached_metadata)
+        if include_request_metadata:
+            projected_metadata.update(request_metadata)
+
+        requested_original_text = request_metadata.get("original_text", req.text)
+        cache_hit_type = "exact"
+        if cached.engine != req.engine:
+            cache_hit_type = "cross_engine"
+            projected_metadata["cache_source_engine"] = cached.engine.value
+        if cached.source_lang != req.source_lang:
+            if cache_hit_type == "exact":
+                cache_hit_type = "source_lang_fallback"
+            projected_metadata["cache_source_lang"] = cached.source_lang
+
+        projected_metadata["cache_hit_type"] = cache_hit_type
+
+        return TranslationResult(
+            original_text=requested_original_text,
+            translated_text=cached.translated_text,
+            source_lang=req.source_lang,
+            target_lang=req.target_lang,
+            engine=req.engine,
+            success=cached.success,
+            error=cached.error,
+            confidence=cached.confidence,
+            quota_exceeded=cached.quota_exceeded,
+            metadata=projected_metadata,
+            text_type=cached.text_type,
+        )
+
+    def _should_materialize_cache_alias(
+        self,
+        key: Tuple[str, str, str, str],
+        cached: TranslationResult,
+    ) -> bool:
+        """Persist an alias when cache lookup used a fallback dimension."""
+        return key[0] != cached.engine.value or key[1] != cached.source_lang
+
     async def translate_with_retry(self, req: TranslationRequest) -> TranslationResult:
-        tr = self.translators.get(req.engine)
-        if not tr:
-            return TranslationResult(req.text, "", req.source_lang, req.target_lang, req.engine, False, f"Translator {req.engine.value} not available")
         # ── Normalize cache key to original (unprotected) text ──
         meta = req.metadata if isinstance(req.metadata, dict) else {}
         cache_text = meta.get('original_text', req.text)
@@ -2664,7 +2709,14 @@ class TranslationManager:
         cached = await self._cache_get(key)
         if cached:
             self.cache_hits += 1
-            return cached
+            projected = self._build_cache_hit_projection(req, cached, include_request_metadata=True)
+            if self._should_materialize_cache_alias(key, cached):
+                alias_result = self._build_cache_hit_projection(req, cached, include_request_metadata=False)
+                await self._cache_put(key, alias_result)
+            return projected
+        tr = self.translators.get(req.engine)
+        if not tr:
+            return TranslationResult(req.text, "", req.source_lang, req.target_lang, req.engine, False, f"Translator {req.engine.value} not available")
         self.cache_misses += 1
         last_err = None
         start = time.time()
@@ -2724,16 +2776,18 @@ class TranslationManager:
             
             if is_valid_cache:
                 self.cache_hits += 1
+                if self._should_materialize_cache_alias(key, cached):
+                    alias_result = self._build_cache_hit_projection(
+                        requests[indices[0]],
+                        cached,
+                        include_request_metadata=False,
+                    )
+                    await self._cache_put(key, alias_result)
                 for idx in indices:
-                    # Kopyala ki metadata bozulmasın
-                    final_results[idx] = TranslationResult(
-                        original_text=requests[idx].text,
-                        translated_text=cached.translated_text,
-                        source_lang=cached.source_lang,
-                        target_lang=cached.target_lang,
-                        engine=cached.engine,
-                        success=True,
-                        metadata=requests[idx].metadata
+                    final_results[idx] = self._build_cache_hit_projection(
+                        requests[idx],
+                        cached,
+                        include_request_metadata=True,
                     )
             else:
                 self.cache_misses += 1
@@ -2909,14 +2963,15 @@ class TranslationManager:
         Cache içeriğini diske kaydet (Atomik & Güvenli).
         Büyük verilerde I/O bloklamasını önlemek için temp-file swap kullanılır.
         """
-        if not self.use_cache or not self._cache:
+        if not self.use_cache:
             return
 
         try:
             import json
             import tempfile
             
-            # Veriyi JSON formatına hazırla
+            # Veriyi JSON formatına hazırla. Boş cache de diske boş obje olarak yazılır;
+            # bu, "clear cache" gibi akışlarda eski dosyanın yeniden yüklenmesini engeller.
             data = {}
             for key, val in self._cache.items():
                 # key: (engine_str, sl, tl, text)

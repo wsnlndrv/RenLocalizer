@@ -41,11 +41,11 @@ Rectangle {
                         label: (backend.uiTrigger, backend.getTextWithDefault("ui_language_label", "App Language:"))
                         ComboBox {
                             Layout.fillWidth: true
-                            model: settingsBackend.getAvailableUILanguages()
+                            model: settingsBackend ? settingsBackend.getAvailableUILanguages() : []
                             textRole: "name"
                             valueRole: "code"
-                            currentIndex: findIndex(model, settingsBackend.currentLanguage)
-                            onActivated: settingsBackend.setUILanguage(currentValue)
+                            currentIndex: findIndex(model, settingsBackend ? settingsBackend.currentLanguage : "")
+                            onActivated: if (settingsBackend) settingsBackend.setUILanguage(currentValue)
                             
                             function findIndex(model, value) {
                                 for(var i=0; i<model.length; i++) if(model[i].code === value) return i;
@@ -58,11 +58,11 @@ Rectangle {
                         label: (backend.uiTrigger, backend.getTextWithDefault("theme_menu", "Theme:"))
                         ComboBox {
                             Layout.fillWidth: true
-                            model: settingsBackend.getAvailableThemes()
+                            model: settingsBackend ? settingsBackend.getAvailableThemes() : []
                             textRole: "name"
                             valueRole: "code"
-                            currentIndex: findIndex(model, settingsBackend.currentTheme)
-                            onActivated: settingsBackend.setTheme(currentValue)
+                            currentIndex: findIndex(model, settingsBackend ? settingsBackend.currentTheme : "")
+                            onActivated: if (settingsBackend) settingsBackend.setTheme(currentValue)
                             
                             function findIndex(model, value) {
                                 for(var i=0; i<model.length; i++) if(model[i].code === value) return i;
@@ -72,8 +72,8 @@ Rectangle {
                     }
                     
                     CheckBox {
-                        checked: settingsBackend.getCheckUpdates()
-                        onCheckedChanged: settingsBackend.setCheckUpdates(checked)
+                        checked: settingsBackend ? settingsBackend.getCheckUpdates() : false
+                        onCheckedChanged: if (settingsBackend) settingsBackend.setCheckUpdates(checked)
                         text: (backend.uiTrigger, backend.getTextWithDefault("check_updates", "Automatically check for updates"))
                     }
 
@@ -102,10 +102,11 @@ Rectangle {
                         spacing: 12
                         
                         CheckBox {
-                            checked: settingsBackend.getPortableMode()
-                            enabled: settingsBackend.isPortableModeSupported()
+                            checked: settingsBackend ? settingsBackend.getPortableMode() : false
+                            enabled: settingsBackend ? settingsBackend.isPortableModeSupported() : false
                             opacity: enabled ? 1.0 : 0.5
                             onCheckedChanged: {
+                                if (!settingsBackend) return
                                 if (checked !== settingsBackend.getPortableMode()) {
                                     var success = settingsBackend.setPortableMode(checked)
                                     if (!success) {
@@ -120,7 +121,7 @@ Rectangle {
                         
                         Button {
                             text: "📁 " + (backend.uiTrigger, backend.getTextWithDefault("open_data_folder_btn", "Open Data Folder"))
-                            onClicked: settingsBackend.openDataFolder()
+                            onClicked: if (settingsBackend) settingsBackend.openDataFolder()
                             font.pixelSize: 13
                             background: Rectangle {
                                 radius: 8
@@ -148,8 +149,8 @@ Rectangle {
                         TextField {
                             Layout.fillWidth: true
                             echoMode: TextInput.Password
-                            text: settingsBackend.getDeepLApiKey()
-                            onTextChanged: settingsBackend.setDeepLApiKey(text)
+                            text: settingsBackend ? settingsBackend.getDeepLApiKey() : ""
+                            onTextChanged: if (settingsBackend) settingsBackend.setDeepLApiKey(text)
                             placeholderText: (backend.uiTrigger, backend.getTextWithDefault("deepl_api_key_placeholder", "API Key (sk-...) or (free:...)"))
                             background: Rectangle { radius: 8; color: root.inputBackground; border.color: root.borderColor }
                         }
@@ -167,8 +168,8 @@ Rectangle {
                             ]
                             textRole: "name"
                             valueRole: "code"
-                            currentIndex: findIndex(model, settingsBackend.getDeepLFormality())
-                            onActivated: settingsBackend.setDeepLFormality(currentValue)
+                            currentIndex: findIndex(model, settingsBackend ? settingsBackend.getDeepLFormality() : "default")
+                            onActivated: if (settingsBackend) settingsBackend.setDeepLFormality(currentValue)
                             function findIndex(model, value) {
                                 for(var i=0; i<model.length; i++) if(model[i].code === value) return i;
                                 return 0;
@@ -186,7 +187,7 @@ Rectangle {
                         ComboBox {
                             id: openaiPresetCombo
                             Layout.fillWidth: true
-                            model: settingsBackend.getOpenAIPresets()
+                            model: settingsBackend ? settingsBackend.getOpenAIPresets() : []
                             textRole: "name"
                             onActivated: {
                                 var result = settingsBackend.applyOpenAIPreset(currentText)
@@ -200,8 +201,8 @@ Rectangle {
                     ApiField { 
                         id: openaiApiKeyField
                         label: (backend.uiTrigger, backend.getTextWithDefault("api_key_label", "API Key")); 
-                        text: settingsBackend.getOpenAIApiKey(); 
-                        onChanged: (newValue) => settingsBackend.setOpenAIApiKey(newValue) 
+                        text: settingsBackend ? settingsBackend.getOpenAIApiKey() : ""; 
+                        onChanged: (newValue) => { if (settingsBackend) settingsBackend.setOpenAIApiKey(newValue) } 
                     }
                     RowLayout {
                         spacing: 12
@@ -210,8 +211,8 @@ Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 40
                             placeholderText: text.length > 0 ? "" : (backend.uiTrigger, backend.getTextWithDefault("placeholder_openai_model", "Model (e.g. gpt-3.5-turbo)"))
-                            text: settingsBackend.getOpenAIModel()
-                            onEditingFinished: settingsBackend.setOpenAIModel(text)
+                            text: settingsBackend ? settingsBackend.getOpenAIModel() : ""
+                            onEditingFinished: if (settingsBackend) settingsBackend.setOpenAIModel(text)
                             leftPadding: 12
                             rightPadding: 12
                             color: root.mainTextColor
@@ -224,8 +225,8 @@ Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 40
                             placeholderText: text.length > 0 ? "" : (backend.uiTrigger, backend.getTextWithDefault("placeholder_openai_base_url", "Base URL (Optional)"))
-                            text: settingsBackend.getOpenAIBaseUrl()
-                            onEditingFinished: settingsBackend.setOpenAIBaseUrl(text)
+                            text: settingsBackend ? settingsBackend.getOpenAIBaseUrl() : ""
+                            onEditingFinished: if (settingsBackend) settingsBackend.setOpenAIBaseUrl(text)
                             leftPadding: 12
                             rightPadding: 12
                             color: root.mainTextColor
@@ -780,6 +781,13 @@ Rectangle {
                         description: (backend.uiTrigger, backend.getTextWithDefault("show_debug_engines_desc", ""))
                         checked: settingsBackend.getShowDebugEngines()
                         onToggled: (isChecked) => settingsBackend.setShowDebugEngines(isChecked)
+                    }
+
+                    DescriptiveCheck {
+                        label: (backend.uiTrigger, backend.getTextWithDefault("runtime_string_diagnostics", "Log Missed Runtime Strings"))
+                        description: (backend.uiTrigger, backend.getTextWithDefault("runtime_string_diagnostics_desc", "Write bounded diagnostics for runtime text that stays untranslated. Useful for sandbox games and dynamic UI debugging."))
+                        checked: settingsBackend.getRuntimeStringDiagnostics()
+                        onToggled: (isChecked) => settingsBackend.setRuntimeStringDiagnostics(isChecked)
                     }
 
                     DescriptiveCheck {

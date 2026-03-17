@@ -1,5 +1,71 @@
 # RenLocalizer Changelog
 
+### [2.7.5] - 2026-03-14
+
+### Parser & Scan Responsiveness Fixes
+- **Create-Phase Progress Visibility:** The translation-file generation flow now emits coarse source-scan and deep-scan progress logs while it is still inside the broader "creating translation files" stage, making long scans visible instead of looking frozen with no feedback.
+- **Progress Totals Aligned:** Source-scan progress counters now use the number of actually processable `.rpy` files after exclusions instead of the raw discovered file count, avoiding misleading totals on projects with many skipped `tl/` or generated files.
+- **Deep Scan Re-Parse Removal:** The deep scan pipeline no longer re-runs the primary `.rpy` extraction pass for every file just to build its duplicate filter, reducing repeated work and improving responsiveness on very large script files.
+- **Excessive-Line Warning Deduplication:** Repeated `Skipping line ... due to excessive length` warnings are now logged once per file/line/length combination per parser instance instead of spamming the console during repeated scan passes.
+- **Directory Scan Progress Callbacks:** Core parser directory walkers now support lightweight progress callbacks so GUI logging can surface long-running scan phases without flooding the UI.
+
+### Release Audit Hardening
+- **Crash Report Path Reliability:** Early startup crash reports now prefer the managed writable data path (`logs/crash_report.log`) instead of assuming the current working directory is writable inside packaged Linux/macOS launches.
+- **Native Startup Error Dialog Fallbacks:** Non-Qt startup failures now try a platform-native dialog (`MessageBox`, `osascript`, `zenity`/`kdialog`) before falling back to console-only output, reducing silent launch failures on GUI-first systems.
+- **Deep Scan Directory Exclusions Honored:** `extract_combined(..., exclude_dirs=...)` now forwards and respects root-level directory exclusions during `.rpy` deep scans instead of silently ignoring the parameter.
+- **macOS Bundle Metadata Update:** The macOS bundle script now updates `Info.plist` via `plistlib` instead of a hard-coded `sed` replacement tied to the template version string.
+- **macOS Icon Fallback Safety:** If `iconutil` fails, the bundle no longer writes a PNG file with an `.icns` extension; it falls back to the default app icon cleanly instead of producing an invalid icon asset.
+
+### Cross-Platform Qt Startup Hardening
+- **Platform-Generic Bootstrap:** Replaced the Windows-only Qt startup helper with a cross-platform bootstrap layer. Linux and macOS now share the same deterministic pre-QML decision point for platform plugin selection, graphics backend selection, and debug logging.
+- **Linux Wayland/X11 Guard:** Mixed Wayland/X11 sessions now prefer `xcb;wayland` during normal startup, and a failed first launch can relaunch once in a safer `xcb + software` mode instead of immediately dying on EGL/OpenGL initialization.
+- **macOS Safe Recovery:** macOS now keeps its native Metal/Cocoa path by default, but if startup fails before the first window stabilizes the launcher can retry once with the Qt Quick software backend for diagnosis and recovery.
+- **One-Shot Recovery Relaunch:** Added a guarded `RENLOCALIZER_QT_RECOVERY_ATTEMPT` recovery flow so startup fallback happens at most once and never loops forever.
+- **CI Smoke Tests:** GitHub Actions now runs frozen-binary smoke tests for Linux and macOS in both native and forced-software startup modes, and Linux additionally smoke-tests the final AppImage launcher path before publishing artifacts.
+- **Dual macOS Releases:** Release builds now publish separate Apple Silicon and Intel DMGs instead of a single opaque macOS artifact.
+- **AppImage Font Reliability:** The Linux AppImage launcher now generates a temporary runtime fontconfig file instead of trying to patch a read-only mounted AppDir, so bundled emoji fonts stay discoverable on minimal systems.
+- **Linux Source-Run Polish:** Linux source runs now probe common system emoji fonts in addition to bundled fonts, and non-Windows QML surfaces prefer `icon.png` over `.ico` to avoid soft or missing icons on source-based X11/Wayland setups.
+- **Cross-Platform UI Asset Packaging:** `icon.png` is now bundled alongside `icon.ico` so non-Windows QML surfaces can render their intended assets correctly inside Linux and macOS packaged builds.
+- **QML Shutdown Noise Guard:** Linux source runs now keep QML backends app-owned and schedule QML engine teardown before backend destruction, reducing the close-time `settingsBackend`/`backend` null-binding spam that could appear across all eagerly-instantiated pages.
+
+### Windows: HiDPI Black Screen Hardening
+- **Safe Qt Quick Bootstrap:** Added a Windows-only Qt graphics bootstrap layer before any Qt import. RenLocalizer now avoids the fragile default D3D path and switches to a safer OpenGL startup path automatically.
+- **HiDPI Software Fallback:** On Windows systems detected at `125%+` DPI scale, the launcher now escalates to **software OpenGL** automatically (`QT_OPENGL=software`) to prevent black startup windows on problematic GPU/driver combinations.
+- **User Override Support:** Added `RENLOCALIZER_QT_RENDER_MODE` (`native`, `opengl`, `software`) and `RENLOCALIZER_QT_DEBUG=1` escape hatches for diagnosis without editing source code.
+- **Runtime Diagnostics:** Startup logs now report the selected graphics mode, detected scale percentage, and the actual Qt Quick graphics API in use after window creation.
+- **Packaging Guard:** Windows builds now explicitly bundle `opengl32sw.dll`, ensuring the software OpenGL fallback works in packaged releases instead of only in source environments.
+- **Build Reproducibility:** Pinned `PyQt6` to the tested `6.10.x` line so GitHub Actions does not drift across unvalidated Qt patch combinations.
+
+### Config & Theme Consistency Fixes
+- **Generic Config Setter Repair:** Removed the dead `auto_save_settings` dependency from `ConfigManager`. Generic `set_api_key()` and `set_setting()` mutations now persist safely again instead of crashing or silently skipping saves.
+- **Theme Persistence Fixed:** Custom themes (`red`, `turquoise`, `green`, `neon`) are now valid first-class presets in `AppSettings`, so selections made in the UI survive restart instead of falling back to `dark`.
+- **Legacy Theme Migration:** Old configs that still store `app_settings.theme` are now migrated transparently to `app_settings.app_theme` during load.
+- **Startup Theme Bootstrap Sync:** `run.py` now reads the active data-path config instead of blindly checking the current working directory, keeping the early Material theme bootstrap aligned with the real saved settings.
+
+### Export Pipeline Fixes
+- **Auto-Export Path Resolution:** Fixed `strings.json` auto-export so it now accepts both the project root and the `game/` directory without constructing broken paths like `game/game/tl/...`.
+- **Cross-Engine Cache Labeling:** Fixed cross-engine cache hits being reported under the cached engine label during active Yandex/other engine sessions. Cache hits are now projected to the selected engine while preserving source provenance metadata internally.
+- **Cache Clear Persistence:** Fixed the translation-memory clear flow so an emptied cache now overwrites `translation_cache.json` on disk instead of leaving stale entries to be reloaded on the next session.
+- **TM View Refresh:** The Translation Memory page now refreshes itself when it becomes visible again and after a translation run finishes, avoiding stale snapshots that could continue showing older engine badges.
+- **Exporter Reliability:** Added the missing regex dependency in the classic `.rpy` exporter and locked the behavior with regression tests for both path styles.
+
+### Runtime Diagnostics
+- **Missed Runtime String Logging:** Added an optional runtime-hook diagnostic mode that records unique untranslated strings seen during gameplay into `game/tl/<lang>/diagnostics/runtime_missed_strings.jsonl`.
+- **Bounded Sandbox Debugging:** Logging is capped and deduplicated to stay safe on sandbox/procedural games while still surfacing exact misses from `say_menu_text_filter` and `replace_text`.
+- **UI Toggle:** Added a Settings toggle so the diagnostic mode can be enabled only for investigation runs and kept off during normal use.
+
+### Translation Reliability Hardening
+- **Core UI Extraction Fixed:** `STANDARD_RENPY_STRINGS` now acts as a true override allowlist, and `_()`-wrapped screen/button labels such as `Auto`, `Q.Save`, and `Q.Load` are no longer dropped by technical-string heuristics.
+- **Sandbox Menu Extraction:** Added a dedicated parser pass for common dynamic menu-list entries such as `["Stats/s", ..., "option"]`, `["Favour/f", ..., "submenu"]`, `["Chat/c", ..., "option"]`, and `["Exit/x", ..., "exit"]`, improving coverage for data-driven sandbox UI labels that previously depended on brittle deep-scan luck.
+- **Shared Corruption Guard:** Unified corruption validation now protects both `tl/*.rpy` outputs and `strings.json`. Placeholder remnants, orphan placeholder markers, tag mismatches, placeholder-set mismatches, separator bleed, and abnormal inflation are blocked consistently with safe source-text fallback.
+- **Targeted Core UI Rescue:** Added a narrow retry/fallback path for critical Ren'Py UI labels (`Save`, `Load`, `About`, `Main Menu`, `Q.Save`, `Q.Load`, etc.) so unchanged engine outputs get one controlled rescue attempt instead of silently shipping as English.
+- **Hotkey Visible-Form Coverage:** `strings.json` now synthesizes exact-match variants like `Stats [S] -> Istatistikler [S]` from source forms such as `Stats/s`, reducing a major sandbox-menu runtime gap without reintroducing unsafe partial replacement.
+- **Quote/Angle Runtime Aliases:** `strings.json` now also synthesizes plain-text aliases from common single wrapped forms like `<Line>`, and the runtime hook now tolerates inner quoted whitespace (`" Line"`) so games that later render wrapped segments with spacing can still hit the exact-match hook more reliably.
+- **Stale TL Recovery:** Existing `tl/<lang>/` entries that are already corrupted (`RLRLPH...`, orphan wrappers, placeholder/tag mismatches) or unchanged core UI labels are now reopened for retranslation instead of being silently treated as good output on reruns.
+- **Diagnostics Upgraded:** Runtime miss logs now distinguish `hotkey_visible_form_miss`, `quote_lookup_miss`, and `corruption_driven_miss`; pipeline diagnostics also emit `translation_blocked_or_fallback.json` with separate counters for unchanged engine outputs, corruption blocks, retry recoveries, and synthesized variant recoveries.
+- **Export Feedback Loop Cut:** Generated `zz_rl_exported_<lang>.rpy` files are now excluded from the TL parse / strings build loop, and `id_<hash>` translation IDs are no longer allowed to leak back into `strings.json`.
+- **Custom Sandbox Edge Cases:** Highly custom sandbox/procedural projects can still surface runtime misses outside these common menu and wrapper patterns, so runtime diagnostics remain the intended follow-up tool for edge-case investigation.
+
 ### [2.7.4] - 2026-03-12
 
 ### 🌟 New: Smart Data Path & Portable Mode
@@ -12,7 +78,7 @@
 
 ### 🐧 Linux: AppImage & Runtime Reliability
 - **Startup Crash & Icon Fixes:** Implemented read-only filesystem fallbacks (logs redirect to `/tmp`) and bundled `NotoColorEmoji.ttf` to natively fix missing emoji icons across all Linux environments.
-- **Improved Compatibility:** Switched build base to Ubuntu 20.04 to ensure maximum `glibc` backward compatibility across older and newer distros.
+- **Improved Compatibility:** Switched build base to Ubuntu 22.04 to ensure maximum stability and reliability across modern Linux distributions (Note: GitHub has retired Ubuntu 20.04 runners).
 
 ### 🔍 Core parsing & Fixes
 - **Disk Optimization & Cleanup:**

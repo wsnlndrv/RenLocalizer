@@ -1,6 +1,7 @@
 ﻿# -*- mode: python ; coding: utf-8 -*-
 import os
 import sys
+from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
@@ -56,11 +57,25 @@ if sys.platform != 'win32':
 datas_list = [
     (os.path.join(project_dir, 'locales'), 'locales'),
     (os.path.join(project_dir, 'icon.ico'), '.'),
+    (os.path.join(project_dir, 'icon.png'), '.'),
     # Add QML files
     (os.path.join(project_dir, 'src', 'gui', 'qml'), os.path.join('src', 'gui', 'qml')),
     # Add version.py for runtime reading
     (os.path.join(project_dir, 'src', 'version.py'), 'src'),
 ]
+
+binaries_list = []
+
+if sys.platform == 'win32':
+    try:
+        import PyQt6
+
+        pyqt_dir = Path(PyQt6.__file__).resolve().parent
+        software_gl_dll = pyqt_dir / 'Qt6' / 'bin' / 'opengl32sw.dll'
+        if software_gl_dll.exists():
+            binaries_list.append((str(software_gl_dll), '.'))
+    except Exception:
+        pass
 
 # Add Linux/Mac shell scripts only when building on those platforms
 # These are for source-based execution assistance, not required for bundled apps
@@ -81,7 +96,7 @@ if sys.platform != 'win32':
 a = Analysis(
     ['run.py'],
     pathex=[project_dir],
-    binaries=[],
+    binaries=binaries_list,
     datas=datas_list,
     hiddenimports=hidden_imports,
     hookspath=[],

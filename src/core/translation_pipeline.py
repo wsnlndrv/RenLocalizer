@@ -12,6 +12,7 @@ import os
 import sys
 import logging
 import asyncio
+import json
 import re
 import time
 from typing import Optional, List, Dict, Callable, Tuple, Union, Any
@@ -20,7 +21,7 @@ from enum import Enum
 from pathlib import Path
 import shutil  # En tepeye ekleyin
 from src.utils.encoding import normalize_to_utf8_sig, read_text_safely, save_text_safely
-from src.core.runtime_hook_template import RUNTIME_HOOK_TEMPLATE
+from src.core.runtime_hook_template import render_runtime_hook
 
 from PyQt6.QtCore import QObject, pyqtSignal, QThread
 
@@ -66,6 +67,37 @@ def _get_renpy_to_api_lang():
 
 # Initialize at module load - used throughout the pipeline
 RENPY_TO_API_LANG = _get_renpy_to_api_lang()
+
+CORE_UI_RETRY_STRINGS = {
+    "About",
+    "Auto",
+    "Back",
+    "End Replay",
+    "Help",
+    "History",
+    "Load",
+    "Load Game",
+    "Main Menu",
+    "Preferences",
+    "Prefs",
+    "Q.Load",
+    "Q.Save",
+    "Save",
+    "Skip",
+    "Start",
+    "Unseen Text",
+}
+SEPARATOR_REMNANTS = ("|||", "RNLSEP", "SEP777", "TXTSEP")
+HOTKEY_SOURCE_RE = re.compile(r"^(?P<label>.+?)\s*/\s*(?P<hotkey>[A-Za-z])$")
+HOTKEY_VISIBLE_RE = re.compile(r"^(?P<label>.+?)\s*\[(?P<hotkey>[A-Za-z])\]$")
+ANGLE_WRAPPED_SINGLE_RE = re.compile(r"^<(?P<label>[^<>|]+)>$")
+PLACEHOLDER_BRACKET_RE = re.compile(r"\[[^\]]+\]")
+RENPY_TAG_RE = re.compile(r"\{/?[^}]+\}")
+HTML_LEAK_RE = re.compile(r"</?(?:span|div)\b", re.IGNORECASE)
+PLACEHOLDER_REMNANT_RE = re.compile(
+    r"(?i)(?:R[A-Z]{0,6}LPH[0-9A-F]{3,}|XRPYX_[A-Z0-9_]+|RNPY_[A-Z0-9_]+)"
+)
+TRANSLATION_ID_KEY_RE = re.compile(r"^id_[0-9a-f]{16,}$")
 
 
 class PipelineStage(Enum):
@@ -200,6 +232,313 @@ class TranslationPipeline(QObject):
         self.engine: TranslationEngine = TranslationEngine.GOOGLE
         self.auto_unren: bool = True # Legacy name, means auto extraction
         self.use_proxy: bool = False
+        self._translation_guard_events: List[Dict[str, Any]] = []
+        self._translation_guard_counts: Dict[str, int] = {}
+        self._translation_guard_sample_limit = 200
+
+    def _emit_scan_progress(
+        self,
+        label: str,
+        current: int,
+        total: int,
+        file_path: Union[str, Path],
+        step: int = 25,
+    ) -> None:
+        """Emit coarse-grained scan progress without flooding the log."""
+        if total <= 0:
+            return
+        if current != 1 and current != total and current % step != 0:
+            return
+        file_name = Path(file_path).name
+        self.log_message.emit("info", f"{label}: {current}/{total} ({file_name})")
+
+    def _reset_translation_diagnostics(self) -> None:
+        self.diagnostic_report = DiagnosticReport()
+        self._translation_guard_events = []
+        self._translation_guard_counts = {
+            'unchanged_by_engine': 0,
+            'blocked_as_corrupted': 0,
+            'recovered_by_retry': 0,
+            'recovered_by_synthesized_variant': 0,
+        }
+
+    def _record_translation_guard_event(
+        self,
+        *,
+        category: str,
+        file_path: str,
+        translation_id: str = '',
+        original_text: str = '',
+        translated_text: str = '',
+        detail: str = '',
+        line_number: int = 0,
+    ) -> None:
+        if category not in self._translation_guard_counts:
+            self._translation_guard_counts[category] = 0
+        self._translation_guard_counts[category] += 1
+        if len(self._translation_guard_events) >= self._translation_guard_sample_limit:
+            return
+        self._translation_guard_events.append({
+            'category': category,
+            'file_path': file_path,
+            'translation_id': translation_id,
+            'line_number': line_number,
+            'detail': detail,
+            'original_preview': (original_text or '')[:160],
+            'translated_preview': (translated_text or '')[:160],
+        })
+
+    def _extract_validation_placeholders(self, text: str, source_text: str = '') -> List[str]:
+        placeholders = PLACEHOLDER_BRACKET_RE.findall(text or '')
+        hotkey_match = HOTKEY_SOURCE_RE.match((source_text or '').strip())
+        if hotkey_match and placeholders:
+            hotkey_suffix = f"[{hotkey_match.group('hotkey').upper()}]"
+            stripped_text = (text or '').strip()
+            if stripped_text.endswith(hotkey_suffix):
+                for idx in range(len(placeholders) - 1, -1, -1):
+                    if placeholders[idx].upper() == hotkey_suffix:
+                        placeholders.pop(idx)
+                        break
+        return sorted(re.sub(r'\s+', '', ph) for ph in placeholders)
+
+    def _classify_translation_corruption(self, original: str, translated: str) -> Optional[str]:
+        orig = (original or '').strip()
+        trans = (translated or '').strip()
+        if not orig or not trans:
+            return None
+        if any(remnant in trans for remnant in SEPARATOR_REMNANTS):
+            return 'separator_remnant'
+        if '⟦' in trans or '⟧' in trans or PLACEHOLDER_REMNANT_RE.search(trans):
+            return 'placeholder_remnant'
+        if HTML_LEAK_RE.search(trans):
+            return 'html_leakage'
+        if len(trans) > max(len(orig) * 4, len(orig) + 80):
+            return 'length_inflation'
+        if not self.validate_placeholders(original=orig, translated=trans):
+            return 'placeholder_set_mismatch'
+        if self._extract_validation_placeholders(orig) != self._extract_validation_placeholders(trans, source_text=orig):
+            return 'placeholder_set_mismatch'
+        if sorted(RENPY_TAG_RE.findall(orig)) != sorted(RENPY_TAG_RE.findall(trans)):
+            return 'renpy_tag_set_mismatch'
+        return None
+
+    def _sanitize_translation_for_output(
+        self,
+        *,
+        original: str,
+        translated: str,
+        file_path: str,
+        translation_id: str,
+        line_number: int = 0,
+    ) -> Tuple[str, Optional[str]]:
+        reason = self._classify_translation_corruption(original, translated)
+        if reason is None:
+            return translated, None
+        self._record_translation_guard_event(
+            category='blocked_as_corrupted',
+            file_path=file_path,
+            translation_id=translation_id,
+            original_text=original,
+            translated_text=translated,
+            detail=reason,
+            line_number=line_number,
+        )
+        try:
+            self.diagnostic_report.mark_blocked(
+                file_path,
+                translation_id,
+                'corrupt_blocked',
+                original_text=original,
+                translated_text=translated,
+            )
+        except Exception:
+            pass
+        return original, reason
+
+    def _should_retry_unchanged_core_ui(self, original_text: str) -> bool:
+        return (original_text or '').strip() in CORE_UI_RETRY_STRINGS
+
+    def _execute_single_request_with_retry_mode(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        translator: Any,
+        request: TranslationRequest,
+    ) -> Optional[Any]:
+        ts = getattr(self.config, 'translation_settings', None)
+        original_config_flag = getattr(ts, 'aggressive_retry_translation', False) if ts else False
+        original_translator_flag = getattr(translator, 'aggressive_retry', None)
+        try:
+            if ts is not None:
+                ts.aggressive_retry_translation = True
+            if original_translator_flag is not None:
+                translator.aggressive_retry = True
+            return loop.run_until_complete(translator.translate_single(request))
+        except Exception as exc:
+            self.logger.debug("Core UI retry failed: %s", exc)
+            return None
+        finally:
+            if ts is not None:
+                ts.aggressive_retry_translation = original_config_flag
+            if original_translator_flag is not None:
+                translator.aggressive_retry = original_translator_flag
+
+    def _retry_unchanged_core_ui(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        request: Optional[TranslationRequest],
+        entry: TranslationEntry,
+        current_text: str,
+    ) -> Tuple[str, bool]:
+        if request is None or not self._should_retry_unchanged_core_ui(entry.original_text):
+            return current_text, False
+
+        translator = self.translation_manager.translators.get(request.engine)
+        if translator is None:
+            return current_text, False
+
+        retry_result = self._execute_single_request_with_retry_mode(loop, translator, request)
+        if retry_result and getattr(retry_result, 'success', False):
+            retry_text = (getattr(retry_result, 'translated_text', '') or '').strip()
+            if retry_text and retry_text != entry.original_text.strip():
+                return retry_text, True
+
+        fallback_translator = getattr(translator, 'fallback_translator', None) or getattr(translator, '_fallback', None)
+        if fallback_translator is not None:
+            fallback_result = self._execute_single_request_with_retry_mode(loop, fallback_translator, request)
+            if fallback_result and getattr(fallback_result, 'success', False):
+                fallback_text = (getattr(fallback_result, 'translated_text', '') or '').strip()
+                if fallback_text and fallback_text != entry.original_text.strip():
+                    return fallback_text, True
+
+        return current_text, False
+
+    def _synthesize_hotkey_visible_variants(self, mapping: Dict[str, str]) -> Dict[str, str]:
+        additions: Dict[str, str] = {}
+        for original, translated in list(mapping.items()):
+            match = HOTKEY_SOURCE_RE.match((original or '').strip())
+            if not match:
+                continue
+            label = match.group('label').strip()
+            hotkey = match.group('hotkey').upper()
+            visible_key = f"{label} [{hotkey}]"
+            translated_stripped = (translated or '').strip()
+            translated_label = translated_stripped
+
+            translated_hotkey_match = HOTKEY_SOURCE_RE.match(translated_stripped)
+            if translated_hotkey_match:
+                translated_label = translated_hotkey_match.group('label').strip()
+            else:
+                visible_match = HOTKEY_VISIBLE_RE.match(translated_stripped)
+                if visible_match and visible_match.group('hotkey').upper() == hotkey:
+                    translated_label = visible_match.group('label').strip()
+
+            visible_value = f"{translated_label} [{hotkey}]"
+            if (
+                visible_key
+                and visible_value
+                and visible_key != visible_value
+                and visible_key not in mapping
+                and visible_key not in additions
+            ):
+                additions[visible_key] = visible_value
+        return additions
+
+    def _unwrap_single_angle_text(self, text: str) -> Optional[str]:
+        stripped = (text or '').strip()
+        if not stripped:
+            return None
+
+        match = ANGLE_WRAPPED_SINGLE_RE.match(stripped)
+        if match:
+            return match.group('label').strip() or None
+
+        if stripped.startswith('<') and stripped.endswith('>') and '|' not in stripped:
+            return stripped[1:-1].strip() or None
+        if stripped.startswith('<') and '|' not in stripped:
+            return stripped[1:].strip() or None
+        if stripped.endswith('>') and '|' not in stripped:
+            return stripped[:-1].strip() or None
+        return None
+
+    def _synthesize_angle_wrapper_variants(self, mapping: Dict[str, str]) -> Dict[str, str]:
+        additions: Dict[str, str] = {}
+        for original, translated in list(mapping.items()):
+            inner_original = self._unwrap_single_angle_text(original)
+            if not inner_original:
+                continue
+
+            translated_stripped = (translated or '').strip()
+            inner_translated = self._unwrap_single_angle_text(translated_stripped) or translated_stripped
+            inner_translated = inner_translated.strip()
+            if (
+                not inner_translated
+                or inner_original == inner_translated
+                or inner_original in mapping
+                or inner_original in additions
+            ):
+                continue
+            additions[inner_original] = inner_translated
+        return additions
+
+    def _reopen_stale_tl_entries(self, tl_files: List[TranslationFile]) -> Dict[str, int]:
+        reopened_counts = {
+            'reopened': 0,
+            'corrupted': 0,
+            'unchanged_core_ui': 0,
+        }
+
+        for tl_file in tl_files:
+            for entry in tl_file.entries:
+                translated = (entry.translated_text or '').strip()
+                if not translated:
+                    continue
+
+                reason: Optional[str] = None
+                corruption_reason = self._classify_translation_corruption(entry.original_text, translated)
+                if corruption_reason is not None:
+                    reason = 'corrupted'
+                    detail = corruption_reason
+                elif translated == (entry.original_text or '').strip() and self._should_retry_unchanged_core_ui(entry.original_text):
+                    reason = 'unchanged_core_ui'
+                    detail = 'unchanged_core_ui'
+                else:
+                    continue
+
+                reopened_counts['reopened'] += 1
+                reopened_counts[reason] += 1
+                entry.translated_text = ''
+                self._record_translation_guard_event(
+                    category='reopened_for_retranslation',
+                    file_path=entry.file_path or tl_file.file_path,
+                    translation_id=entry.translation_id or entry.compute_id(),
+                    original_text=entry.original_text,
+                    translated_text=translated,
+                    detail=detail,
+                    line_number=entry.line_number,
+                )
+
+        return reopened_counts
+
+    def _write_translation_reports(self, lang_dir: str) -> None:
+        diag_dir = os.path.join(lang_dir, 'diagnostics')
+        os.makedirs(diag_dir, exist_ok=True)
+        diag_path = os.path.join(diag_dir, f'diagnostic_{self.target_language}.json')
+        self.diagnostic_report.write(diag_path)
+        self.log_message.emit('info', self.config.get_log_text('log_diagnostic_written', path=diag_path))
+
+        report_path = os.path.join(diag_dir, 'translation_blocked_or_fallback.json')
+        payload = {
+            'generated_at': int(time.time()),
+            'counts': dict(self._translation_guard_counts),
+            'sample_limit': self._translation_guard_sample_limit,
+            'samples': self._translation_guard_events,
+        }
+        save_text_safely(Path(report_path), json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+
+    def _is_generated_export_file(self, file_path: str) -> bool:
+        basename = os.path.basename(file_path or '')
+        lowered = basename.lower()
+        return lowered.startswith('zz_rl_exported_') and lowered.endswith('.rpy')
 
     def emit_log(self, level: str, message: str):
         """
@@ -325,6 +664,7 @@ class TranslationPipeline(QObject):
     
     def _run_pipeline(self) -> PipelineResult:
         """Ana pipeline akışı"""
+        self._reset_translation_diagnostics()
         
         # 1. Doğrulama
         self._set_stage(PipelineStage.VALIDATING, self.config.get_ui_text("stage_validating"))
@@ -535,6 +875,9 @@ class TranslationPipeline(QObject):
         target_tl_dir = os.path.normcase(os.path.join(tl_path, renpy_lang))
         filtered_files: List[TranslationFile] = []
         for tl_file in tl_files:
+            if self._is_generated_export_file(tl_file.file_path):
+                self.log_message.emit("debug", f"[ExportFilter] Skipping generated export file: {tl_file.file_path}")
+                continue
             fp_norm = os.path.normcase(tl_file.file_path)
             if fp_norm.startswith(target_tl_dir):
                 tl_file.entries = [
@@ -556,7 +899,14 @@ class TranslationPipeline(QObject):
                 scan_res = parser.extract_combined(
                     str(game_dir), include_rpy=True, include_rpyc=True, 
                     include_deep_scan=True, recursive=True,
-                    exclude_dirs=['renpy', 'common', 'tl', 'lib', 'python-packages'] # Security: skip engine
+                    exclude_dirs=['renpy', 'common', 'tl', 'lib', 'python-packages'], # Security: skip engine
+                    progress_callback=lambda current, total, file_path: self._emit_scan_progress(
+                        "Deep scan progress",
+                        current,
+                        total,
+                        file_path,
+                        step=25,
+                    ),
                 )
                 
                 existing = {e.original_text for t in tl_files for e in t.entries}
@@ -609,7 +959,17 @@ class TranslationPipeline(QObject):
                 message=self.config.get_ui_text("pipeline_files_not_found_parse"),
                 stage=PipelineStage.ERROR
             )
-        
+
+        reopened_counts = self._reopen_stale_tl_entries(tl_files)
+        if reopened_counts['reopened']:
+            self.log_message.emit(
+                "info",
+                "Reopened stale TL entries for retranslation: "
+                f"{reopened_counts['reopened']} "
+                f"(corrupted={reopened_counts['corrupted']}, "
+                f"unchanged_core_ui={reopened_counts['unchanged_core_ui']})"
+            )
+
         # Çevrilmemiş girişleri topla
         all_entries = []
         for tl_file in tl_files:
@@ -737,23 +1097,21 @@ class TranslationPipeline(QObject):
         
         # Final istatistikler
         # Dosyaları yeniden parse et
-        tl_files_updated = self.tl_parser.parse_directory(tl_path, self.target_language)
+        tl_files_updated = [
+            tl_file
+            for tl_file in self.tl_parser.parse_directory(tl_path, self.target_language)
+            if not self._is_generated_export_file(tl_file.file_path)
+        ]
         stats = get_translation_stats(tl_files_updated)
 
-        # Write diagnostics JSON next to tl folder
-        try:
-            diag_path = os.path.join(tl_dir, 'diagnostics', f'diagnostic_{self.target_language}.json')
-            self.diagnostic_report.write(diag_path)
-            self.log_message.emit('info', self.config.get_log_text('log_diagnostic_written', path=diag_path))
-        except Exception:
-            pass
-        
         # Hedef dil icin dil baslatici dosyasi olustur
+        report_dir = tl_dir
         if game_dir and os.path.isdir(game_dir):
             self._create_language_init_file(str(game_dir))
             
             # strings.json oluştur (Agresif kanca için)
             lang_dir = os.path.join(tl_path, renpy_lang)
+            report_dir = lang_dir
             self._generate_strings_json(tl_files_updated, lang_dir, extra_translations=translations)
             
             self._manage_runtime_hook()
@@ -765,6 +1123,11 @@ class TranslationPipeline(QObject):
                     self.log_message.emit("info", "Auto-exported translation strings to classic .rpy files.")
             except Exception as e:
                 self.logger.warning(f"Auto-export to RPY failed: {e}")
+
+        try:
+            self._write_translation_reports(report_dir)
+        except Exception as exc:
+            self.logger.debug(f"Failed to write translation reports: {exc}")
 
         self._set_stage(PipelineStage.COMPLETED, self.config.get_ui_text("stage_completed"))
         summary = self.config.get_ui_text("pipeline_completed_summary").replace("{translated}", str(len(translations))).replace("{saved}", str(saved_count))
@@ -878,8 +1241,7 @@ class TranslationPipeline(QObject):
             extra_translations: Ek çeviri çiftleri (atomik segment girişleri vb.)
         """
         try:
-            import json
-            mapping = {}
+            mapping: Dict[str, str] = {}
             skipped_corrupt = 0
             skipped_reason_counts = {
                 'separator_remnant': 0,
@@ -904,81 +1266,49 @@ class TranslationPipeline(QObject):
                         'translated_preview': translated[:120],
                     })
 
+            def _try_add_mapping(original: str, translated: str) -> None:
+                orig = (original or '').strip()
+                trans = (translated or '').strip()
+                if not orig or not trans or orig == trans:
+                    return
+                if TRANSLATION_ID_KEY_RE.fullmatch(orig):
+                    return
+
+                reason = self._classify_translation_corruption(orig, trans)
+                if reason is not None:
+                    _mark_skipped(reason, orig, trans)
+                    self.logger.debug(
+                        "strings.json: Skipping %s in translation of: %s",
+                        reason,
+                        orig[:40],
+                    )
+                    return
+
+                if orig in mapping:
+                    if mapping[orig] != trans:
+                        _mark_skipped('duplicate_key_conflict', orig, trans)
+                        self.logger.debug(
+                            "strings.json: Duplicate key conflict, keeping existing: "
+                            "%s -> existing=%s vs new=%s",
+                            orig[:40],
+                            mapping[orig][:30],
+                            trans[:30],
+                        )
+                    return
+
+                mapping[orig] = trans
+
             for tfile in tl_files:
                 for entry in tfile.entries:
                     if entry.original_text and entry.translated_text:
-                        # Skip technical/empty/same
-                        orig = entry.original_text.strip()
-                        trans = entry.translated_text.strip()
-                        if not orig or not trans or orig == trans:
-                            continue
-                        # Sanitization: skip corrupted translations
-                        # 1. Separator remnant check (batch separator bleeding)
-                        if '|||' in trans or 'RNLSEP' in trans or 'SEP777' in trans or 'TXTSEP' in trans:
-                            _mark_skipped('separator_remnant', orig, trans)
-                            self.logger.debug(f"strings.json: Skipping separator remnant in translation of: {orig[:40]}")
-                            continue
-                        # 2. Placeholder remnant check (restore failure leakage)
-                        if '\u27e6RLPH' in trans or 'XRPYX_' in trans or 'RNPY_' in trans or '\u27e6' in trans:
-                            _mark_skipped('placeholder_remnant', orig, trans)
-                            self.logger.debug(f"strings.json: Skipping placeholder remnant in translation of: {orig[:40]}")
-                            continue
-                        # 3. HTML tag leakage check (from Google Translate HTML protection mode)
-                        if '<span' in trans.lower() or '</span>' in trans.lower() or '<div' in trans.lower():
-                            _mark_skipped('html_leakage', orig, trans)
-                            self.logger.debug(f"strings.json: Skipping HTML tag leakage in translation of: {orig[:40]}")
-                            continue
-                        # 4. Length inflation check (translated text abnormally longer than original)
-                        orig_len = len(orig)
-                        trans_len = len(trans)
-                        if orig_len > 0 and trans_len > max(orig_len * 4, orig_len + 80):
-                            _mark_skipped('length_inflation', orig, trans)
-                            self.logger.debug(f"strings.json: Skipping inflated translation ({trans_len} vs {orig_len}): {orig[:40]}")
-                            continue
-
-                        # 5. Placeholder set integrity check
-                        # Prevents broken mappings such as missing/extra [name] placeholders.
-                        orig_placeholders = sorted(re.findall(r'\[[^\]]+\]', orig))
-                        trans_placeholders = sorted(re.findall(r'\[[^\]]+\]', trans))
-                        if orig_placeholders != trans_placeholders:
-                            _mark_skipped('placeholder_set_mismatch', orig, trans)
-                            self.logger.debug(f"strings.json: Skipping placeholder-set mismatch in translation of: {orig[:40]}")
-                            continue
-
-                        # 6. Ren'Py text tag integrity check
-                        # Prevents context bleed like plain key -> styled/tagged value
-                        # e.g. "RedLightHouse" -> "{font=...}RedLightHouse{/font}"
-                        orig_tags = sorted(re.findall(r'\{/?[^}]+\}', orig))
-                        trans_tags = sorted(re.findall(r'\{/?[^}]+\}', trans))
-                        if orig_tags != trans_tags:
-                            _mark_skipped('renpy_tag_set_mismatch', orig, trans)
-                            self.logger.debug(f"strings.json: Skipping Ren'Py tag-set mismatch in translation of: {orig[:40]}")
-                            continue
-
-                        # 7. Duplicate key conflict detection
-                        # When the same original text appears in multiple files with
-                        # different translations, silently overwriting loses data.
-                        # Strategy: keep the first (typically from the main dialogue file).
-                        if orig in mapping:
-                            if mapping[orig] != trans:
-                                _mark_skipped('duplicate_key_conflict', orig, trans)
-                                self.logger.debug(
-                                    f"strings.json: Duplicate key conflict, keeping existing: "
-                                    f"{orig[:40]} -> existing={mapping[orig][:30]} vs new={trans[:30]}"
-                                )
-                            continue  # same key+value is harmless, skip either way
-
-                        mapping[orig] = trans
+                        _try_add_mapping(entry.original_text, entry.translated_text)
             
             # ── Atomik segment çevirileri ekle (v2.7.1) ──
             # Delimiter gruplarından gelen bağımsız segment çevirileri,
             # Ren'Py runtime vary() eşleşmesi için strings.json'a eklenir.
             if extra_translations:
                 for orig, trans in extra_translations.items():
-                    orig_s = orig.strip()
-                    trans_s = trans.strip()
-                    if orig_s and trans_s and orig_s != trans_s and orig_s not in mapping:
-                        mapping[orig_s] = trans_s
+                    _try_add_mapping(orig, trans)
             
             # ── Delimiter grup segmentlerini ayır (v2.7.1 hotfix) ──
             # Ren'Py vary() fonksiyonu <A|B|C> bloklarını parçalayıp tek segment seçer.
@@ -1098,6 +1428,70 @@ class TranslationPipeline(QObject):
                     )
             except Exception as e:
                 self.logger.debug(f"strings.json tag-stripping skipped: {e}")
+
+            try:
+                hotkey_additions = self._synthesize_hotkey_visible_variants(mapping)
+                if hotkey_additions:
+                    for visible_key, visible_value in hotkey_additions.items():
+                        if visible_key in mapping:
+                            continue
+                        mapping[visible_key] = visible_value
+                        self._record_translation_guard_event(
+                            category='recovered_by_synthesized_variant',
+                            file_path='strings.json',
+                            translation_id=visible_key,
+                            original_text=visible_key,
+                            translated_text=visible_value,
+                            detail='visible_hotkey_variant',
+                        )
+                        try:
+                            self.diagnostic_report.mark_recovered(
+                                'strings.json',
+                                visible_key,
+                                'synthesized_variant',
+                                original_text=visible_key,
+                                translated_text=visible_value,
+                            )
+                        except Exception:
+                            pass
+                    self.logger.info(
+                        "strings.json: %s hotkey visible-form variants synthesized for runtime exact-match coverage",
+                        len(hotkey_additions),
+                    )
+            except Exception as e:
+                self.logger.debug(f"strings.json hotkey synthesis skipped: {e}")
+
+            try:
+                angle_additions = self._synthesize_angle_wrapper_variants(mapping)
+                if angle_additions:
+                    for inner_key, inner_value in angle_additions.items():
+                        if inner_key in mapping:
+                            continue
+                        mapping[inner_key] = inner_value
+                        self._record_translation_guard_event(
+                            category='recovered_by_synthesized_variant',
+                            file_path='strings.json',
+                            translation_id=inner_key,
+                            original_text=inner_key,
+                            translated_text=inner_value,
+                            detail='angle_wrapper_variant',
+                        )
+                        try:
+                            self.diagnostic_report.mark_recovered(
+                                'strings.json',
+                                inner_key,
+                                'synthesized_variant',
+                                original_text=inner_key,
+                                translated_text=inner_value,
+                            )
+                        except Exception:
+                            pass
+                    self.logger.info(
+                        "strings.json: %s angle-wrapper aliases synthesized for runtime quote lookup coverage",
+                        len(angle_additions),
+                    )
+            except Exception as e:
+                self.logger.debug(f"strings.json angle-wrapper synthesis skipped: {e}")
             
             if skipped_corrupt > 0:
                 self.logger.warning(f"strings.json: Skipped {skipped_corrupt} potentially corrupted translation(s)")
@@ -1183,10 +1577,13 @@ class TranslationPipeline(QObject):
             renpy_lang = reverse_lang_map.get(target_lang.lower(), target_lang)
             
             if should_exist:
-                content = (
-                    RUNTIME_HOOK_TEMPLATE.replace("{renpy_lang}", renpy_lang)
-                    .replace("{{", "{")
-                    .replace("}}", "}")
+                content = render_runtime_hook(
+                    renpy_lang,
+                    runtime_string_diagnostics=getattr(
+                        self.config.translation_settings,
+                        "runtime_string_diagnostics",
+                        False,
+                    ),
                 )
                 save_text_safely(hook_path, content, encoding="utf-8")
                 self.log_message.emit('info', self.config.get_ui_text("log_hook_installed").replace("{filename}", hook_filename))
@@ -1366,6 +1763,7 @@ init python:
         Var olan tl/<dil> klasorundeki .rpy dosyalarini (Ren'Py SDK ile uretildi)
         dogrudan cevirir. Oyunun EXE'sine gerek yoktur.
         """
+        self._reset_translation_diagnostics()
         # GUI ISO kodu (fr/en/tr) gonderir; Ren'Py klasor adi icin ters cevir
         reverse_lang_map = {v.lower(): k for k, v in RENPY_TO_API_LANG.items()}
         target_iso = (target_language or "").lower()
@@ -1468,6 +1866,9 @@ init python:
         target_tl_dir = os.path.normcase(os.path.join(str(tl_path), lang_dir.name))
         filtered_files: List[TranslationFile] = []
         for tl_file in tl_files:
+            if self._is_generated_export_file(tl_file.file_path):
+                self.log_message.emit("debug", f"[ExportFilter] Skipping generated export file: {tl_file.file_path}")
+                continue
             fp_norm = os.path.normcase(tl_file.file_path)
             if fp_norm.startswith(target_tl_dir):
                 tl_file.entries = [
@@ -1495,6 +1896,16 @@ init python:
                 success=False,
                 message=self.config.get_ui_text("pipeline_files_not_found_parse"),
                 stage=PipelineStage.ERROR,
+            )
+
+        reopened_counts = self._reopen_stale_tl_entries(tl_files)
+        if reopened_counts['reopened']:
+            self.log_message.emit(
+                "info",
+                "Reopened stale TL entries for retranslation: "
+                f"{reopened_counts['reopened']} "
+                f"(corrupted={reopened_counts['corrupted']}, "
+                f"unchanged_core_ui={reopened_counts['unchanged_core_ui']})"
             )
 
         # Cevrilecek girisleri topla
@@ -1582,16 +1993,12 @@ init python:
                 pass
 
         # Final istatistikler
-        tl_files_updated = self.tl_parser.parse_directory(str(tl_path), lang_dir.name)
+        tl_files_updated = [
+            tl_file
+            for tl_file in self.tl_parser.parse_directory(str(tl_path), lang_dir.name)
+            if not self._is_generated_export_file(tl_file.file_path)
+        ]
         stats = get_translation_stats(tl_files_updated)
-
-        # Diagnostics JSON yaz
-        try:
-            diag_path = os.path.join(str(lang_dir), 'diagnostics', f'diagnostic_{self.target_language}.json')
-            self.diagnostic_report.write(diag_path)
-            self.log_message.emit('info', self.config.get_log_text('log_diagnostic_written', path=diag_path))
-        except Exception:
-            pass
 
         # Hedef dil icin dil baslatici dosyasi olustur
         if game_dir and game_dir.exists():
@@ -1601,6 +2008,11 @@ init python:
             self._generate_strings_json(tl_files_updated, str(lang_dir), extra_translations=translations)
 
             self._manage_runtime_hook()
+
+        try:
+            self._write_translation_reports(str(lang_dir))
+        except Exception as exc:
+            self.logger.debug(f"Failed to write translation reports: {exc}")
 
         self._set_stage(PipelineStage.COMPLETED, self.config.get_ui_text("stage_completed"))
         summary = self.config.get_ui_text("pipeline_completed_summary").replace("{translated}", str(len(translations))).replace("{saved}", str(saved_count))
@@ -1908,7 +2320,17 @@ init python:
             
             # 1. Parse 'game' directory
             # Parse 'game' directory and flatten results
-            parse_results = parser.parse_directory(game_dir)
+            self.log_message.emit("info", "Scanning source .rpy files...")
+            parse_results = parser.parse_directory(
+                game_dir,
+                progress_callback=lambda current, total, file_path: self._emit_scan_progress(
+                    "Source scan progress",
+                    current,
+                    total,
+                    file_path,
+                    step=50,
+                ),
+            )
             source_texts = []
             for i, (file_path, entries) in enumerate(parse_results.items()):
                 for entry in entries:
@@ -1918,6 +2340,7 @@ init python:
                 # Yield periodically to keep UI responsive
                 if i % 50 == 0:
                     time.sleep(0.001)
+            self.log_message.emit("info", f"Source scan completed. {len(parse_results)} files processed.")
 
             # Resolve feature flags once so they can be reused for engine/common scanning
             use_deep = getattr(self, 'include_deep_scan', False)
@@ -2024,7 +2447,16 @@ init python:
             # Check config (default to True if not set)
             if use_deep:
                 self.log_message.emit("info", self.config.get_log_text('deep_scan_running_short'))
-                deep_results = parser.extract_from_directory_with_deep_scan(game_dir)
+                deep_results = parser.extract_from_directory_with_deep_scan(
+                    game_dir,
+                    progress_callback=lambda current, total, file_path: self._emit_scan_progress(
+                        "Deep scan progress",
+                        current,
+                        total,
+                        file_path,
+                        step=25,
+                    ),
+                )
 
             # 4. RPYC Execution
             if use_rpyc:
@@ -2954,7 +3386,7 @@ init python:
                 # Multi-group entry: 1 template + sum(group_lens) segments → rejoin
                 
                 # Build a unified result list aligned with batch entries
-                _entry_results = []  # List of (tid, restored_text_or_None, entry, success, error)
+                _entry_results = []  # List of (tid, restored_text_or_None, entry, success, error, request)
                 _atomic_segments = []  # List of (original_seg, translated_seg) pairs for delimiter entries
                 _req_cursor = 0  # Tracks position in results list
                 
@@ -3035,9 +3467,9 @@ init python:
                             
                             if restored is None:
                                 self.log_message.emit("warning", f"[MultiGroup] Structural corruption detected, using original: {orig_text[:80]}")
-                                _entry_results.append((tid, orig_text, entry, True, None))
+                                _entry_results.append((tid, orig_text, entry, True, None, None))
                             else:
-                                _entry_results.append((tid, restored, entry, True, None))
+                                _entry_results.append((tid, restored, entry, True, None, None))
                                 # ── Atomik segment kaydı (v2.7.1) ──
                                 # Her segmentin orijinal→çeviri çiftini kaydet.
                                 # Ren'Py runtime'da vary() ile segmentleri ayrı ayrı çağırır.
@@ -3050,7 +3482,7 @@ init python:
                                                 _atomic_segments.append((orig_seg, tr_seg))
                                             seg_r_cursor += 1
                         else:
-                            _entry_results.append((tid, None, entry, False, seg_error))
+                            _entry_results.append((tid, None, entry, False, seg_error, None))
                     
                     elif entry_idx in _delimiter_groups:
                         # Bu entry delimiter-split edilmişti
@@ -3094,9 +3526,9 @@ init python:
                             if restored is None:
                                 # Yapısal bozulma tespit edildi — orijinal metni koru
                                 self.log_message.emit("warning", f"[Delimiter] Structural corruption detected, using original: {orig_text[:80]}")
-                                _entry_results.append((tid, orig_text, entry, True, None))
+                                _entry_results.append((tid, orig_text, entry, True, None, None))
                             else:
-                                _entry_results.append((tid, restored, entry, True, None))
+                                _entry_results.append((tid, restored, entry, True, None, None))
                                 # ── Atomik segment kaydı (v2.7.1) ──
                                 # Bare-pipe segmentlerinin her birini ayrı çeviri girişi olarak kaydet.
                                 for seg_i in range(seg_count):
@@ -3108,10 +3540,11 @@ init python:
                                             _atomic_segments.append((orig_seg, tr_seg))
                         else:
                             # Herhangi bir segment başarısız ise orijinali koru
-                            _entry_results.append((tid, None, entry, False, seg_error))
+                            _entry_results.append((tid, None, entry, False, seg_error, None))
                     else:
                         # Normal (non-delimited) entry
                         if _req_cursor < len(results):
+                            result_request = requests[_req_cursor]
                             result = results[_req_cursor]
                             _req_cursor += 1
                             
@@ -3127,21 +3560,40 @@ init python:
                                         original_text=entry.original_text
                                     )
                                 restored = translated_raw if translated_raw else ""
-                                _entry_results.append((result.metadata.get('translation_id') or result.original_text, restored, entry, True, None))
+                                _entry_results.append((result.metadata.get('translation_id') or result.original_text, restored, entry, True, None, result_request))
                             else:
-                                _entry_results.append((result.metadata.get('translation_id') or result.original_text, None, entry, False, result.error or "empty"))
+                                _entry_results.append((result.metadata.get('translation_id') or result.original_text, None, entry, False, result.error or "empty", result_request))
                         else:
-                            _entry_results.append(("", None, entry, False, "missing_result"))
+                            _entry_results.append(("", None, entry, False, "missing_result", None))
                 
                 # ============================================================
                 # FAZ 2: Sonuçları translations'a yaz
                 # ============================================================
-                for tid, restored, entry, success, error in _entry_results:
+                for tid, restored, entry, success, error, request in _entry_results:
                     if success and restored is not None:
-                        # Otomatik doğrulama: placeholder bozulduysa orijinali kullan
-                        if not self.validate_placeholders(original=entry.original_text, translated=restored):
-                            self.log_message.emit("warning", self.config.get_log_text('placeholder_corrupted', original=entry.original_text, translated=restored))
-                            restored = entry.original_text
+                        retry_recovered = False
+                        blocked_reason = None
+                        if restored.strip() == entry.original_text.strip() and self._should_retry_unchanged_core_ui(entry.original_text):
+                            restored, retry_recovered = self._retry_unchanged_core_ui(loop, request, entry, restored)
+                            if retry_recovered and self.config and hasattr(self.config, 'glossary') and self.config.glossary:
+                                restored = formatter.apply_glossary(
+                                    text=restored,
+                                    glossary=self.config.glossary,
+                                    original_text=entry.original_text,
+                                )
+
+                        restored, blocked_reason = self._sanitize_translation_for_output(
+                            original=entry.original_text,
+                            translated=restored,
+                            file_path=entry.file_path,
+                            translation_id=tid,
+                            line_number=entry.line_number,
+                        )
+                        if blocked_reason is not None:
+                            self.log_message.emit(
+                                "warning",
+                                f"[Guard] Blocked corrupted translation ({blocked_reason}) in {entry.file_path}:{entry.line_number}",
+                            )
                         
                         if restored:
                             translations[tid] = restored
@@ -3150,14 +3602,50 @@ init python:
                             # Diagnostics: record translated and unchanged
                             try:
                                 file_path = entry.file_path
-                                if restored == entry.original_text:
-                                    self.diagnostic_report.mark_unchanged(file_path, tid, original_text=entry.original_text)
+                                if blocked_reason is not None:
+                                    pass
+                                elif retry_recovered:
+                                    self.diagnostic_report.mark_translated(file_path, tid, restored, original_text=entry.original_text)
+                                    self.diagnostic_report.mark_recovered(
+                                        file_path,
+                                        tid,
+                                        'retry',
+                                        original_text=entry.original_text,
+                                        translated_text=restored,
+                                    )
+                                    self._record_translation_guard_event(
+                                        category='recovered_by_retry',
+                                        file_path=file_path,
+                                        translation_id=tid,
+                                        original_text=entry.original_text,
+                                        translated_text=restored,
+                                        detail='core_ui_retry',
+                                        line_number=entry.line_number,
+                                    )
+                                elif restored == entry.original_text:
+                                    unchanged_reason = 'unchanged_core_ui' if self._should_retry_unchanged_core_ui(entry.original_text) else None
+                                    self.diagnostic_report.mark_unchanged(
+                                        file_path,
+                                        tid,
+                                        original_text=entry.original_text,
+                                        reason=unchanged_reason,
+                                    )
+                                    if unchanged_reason:
+                                        self._record_translation_guard_event(
+                                            category='unchanged_by_engine',
+                                            file_path=file_path,
+                                            translation_id=tid,
+                                            original_text=entry.original_text,
+                                            translated_text=restored,
+                                            detail=unchanged_reason,
+                                            line_number=entry.line_number,
+                                        )
                                 else:
                                     self.diagnostic_report.mark_translated(file_path, tid, restored, original_text=entry.original_text)
                             except Exception:
                                 pass
                             
-                            if restored == entry.original_text:
+                            if restored == entry.original_text and blocked_reason is None:
                                 unchanged_count += 1
                                 if len(sample_logs) < 5:
                                     sample_logs.append(f"UNCHANGED {entry.file_path}:{entry.line_number} -> {entry.original_text[:80]}")
@@ -3185,9 +3673,17 @@ init python:
                 if _atomic_segments:
                     _seg_added = 0
                     for orig_seg, tr_seg in _atomic_segments:
+                        safe_seg, blocked_reason = self._sanitize_translation_for_output(
+                            original=orig_seg,
+                            translated=tr_seg,
+                            file_path='strings.json',
+                            translation_id=orig_seg,
+                        )
+                        if blocked_reason is not None or safe_seg == orig_seg:
+                            continue
                         if orig_seg not in translations:
-                            translations[orig_seg] = tr_seg
-                            self._last_atomic_segments[orig_seg] = tr_seg
+                            translations[orig_seg] = safe_seg
+                            self._last_atomic_segments[orig_seg] = safe_seg
                             _seg_added += 1
                     if _seg_added:
                         self.emit_log("debug", f"[AtomicSegments] {_seg_added} individual segment translations registered from delimiter groups")

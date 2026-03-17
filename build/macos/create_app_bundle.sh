@@ -27,14 +27,32 @@ mkdir -p "$APP_PATH/Contents/Resources"
 cp "$SCRIPT_DIR/Info.plist" "$APP_PATH/Contents/Info.plist"
 
 # Inject version from source
+DEFAULT_VERSION=$(python3 -c "
+import plistlib
+from pathlib import Path
+plist_path = Path('$SCRIPT_DIR') / 'Info.plist'
+with plist_path.open('rb') as f:
+    data = plistlib.load(f)
+print(data.get('CFBundleShortVersionString', '0.0.0'))
+" 2>/dev/null || echo "0.0.0")
+
 VERSION=$(python3 -c "
 import sys; sys.path.insert(0, '$PROJECT_ROOT')
 from src.version import VERSION; print(VERSION)
-" 2>/dev/null || echo "2.7.2")
+" 2>/dev/null || echo "$DEFAULT_VERSION")
 
-# Update version in Info.plist (using sed for portability)
-sed -i.bak "s/<string>2\.7\.2<\/string>/<string>${VERSION}<\/string>/g" "$APP_PATH/Contents/Info.plist"
-rm -f "$APP_PATH/Contents/Info.plist.bak"
+# Update version in Info.plist using plistlib so the template version is not hard-coded.
+python3 -c "
+import plistlib
+from pathlib import Path
+plist_path = Path('$APP_PATH') / 'Contents' / 'Info.plist'
+with plist_path.open('rb') as f:
+    data = plistlib.load(f)
+data['CFBundleShortVersionString'] = '$VERSION'
+data['CFBundleVersion'] = '$VERSION'
+with plist_path.open('wb') as f:
+    plistlib.dump(data, f, sort_keys=False)
+"
 
 echo "  Version: $VERSION"
 
@@ -73,8 +91,8 @@ except Exception as e:
     # Use iconutil to create .icns from iconset
     if ls "$ICONSET_DIR"/*.png 1>/dev/null 2>&1; then
         iconutil -c icns "$ICONSET_DIR" -o "$APP_PATH/Contents/Resources/icon.icns" 2>/dev/null || {
-            echo "  Warning: iconutil failed, copying largest PNG as fallback"
-            cp "$ICONSET_DIR/icon_256x256.png" "$APP_PATH/Contents/Resources/icon.icns" 2>/dev/null || true
+            echo "  Warning: iconutil failed, bundle will use the default app icon"
+            rm -f "$APP_PATH/Contents/Resources/icon.icns"
         }
     fi
     
@@ -101,8 +119,9 @@ RESOURCES="$DIR/../Resources/app"
 # Set working directory to Resources so relative paths work
 cd "$RESOURCES"
 
-# Set Qt environment
-export QT_MAC_WANTS_LAYER=1
+# Keep the Cocoa layer-backed window path enabled unless the user or CI
+# already provided a more specific override.
+export QT_MAC_WANTS_LAYER="${QT_MAC_WANTS_LAYER:-1}"
 
 # Launch the actual binary
 exec "$RESOURCES/RenLocalizer" "$@"

@@ -37,12 +37,29 @@ Architecture Notes (v4.1.0 — DIRECT COMPARISON):
     "MA"->"yüksek lisans") inside already-translated target-language text.
 """
 
-# RenLocalizer Runtime Translation Hook Template (v4.1.0)
+# RenLocalizer Runtime Translation Hook Template (v4.1.1)
 # Uses Centralized Template System for easier updates.
-RUNTIME_HOOK_TEMPLATE = r'''# RenLocalizer Runtime Translation Hook v4.1.0
+def render_runtime_hook(
+    renpy_lang: str,
+    *,
+    runtime_string_diagnostics: bool = False,
+    runtime_miss_limit: int = 500,
+) -> str:
+    """Render the runtime hook with project-specific placeholders injected."""
+    return (
+        RUNTIME_HOOK_TEMPLATE
+        .replace("{renpy_lang}", renpy_lang)
+        .replace("{runtime_string_diagnostics}", "True" if runtime_string_diagnostics else "False")
+        .replace("{runtime_miss_limit}", str(runtime_miss_limit))
+        .replace("{{", "{")
+        .replace("}}", "}")
+    )
+
+
+RUNTIME_HOOK_TEMPLATE = r'''# RenLocalizer Runtime Translation Hook v4.1.1
 # Direct comparison translation system.
 #
-# ARCHITECTURE (v4.1.0 — DIRECT COMPARISON):
+# ARCHITECTURE (v4.1.1 — DIRECT COMPARISON):
 #   Layer 1: say_menu_text_filter — EXACT match only (pre-interpolation safety)
 #   Layer 2: replace_text — Direct comparison from strings.json (post-interpolation)
 #   Layer 3: character_callback — Debug monitoring
@@ -59,18 +76,27 @@ init -999 python:
     import os as _rl_os
     import io as _rl_io
     import re as _rl_re
+    import time as _rl_time
     import json as _rl_json
 
     # =========================================================================
-    # INITIALIZATION (v4.1.0 — DIRECT COMPARISON)
+    # INITIALIZATION (v4.1.1 — DIRECT COMPARISON + MISSED DIAGNOSTICS)
     # =========================================================================
     _rl_translated_values = set()
     _renlocalizer_debug = False
+    _rl_runtime_string_diagnostics = {runtime_string_diagnostics}
+    _rl_runtime_miss_limit = {runtime_miss_limit}
+    _rl_runtime_miss_logged = set()
+    _rl_runtime_miss_path = None
     _rl_translations = {{}}
     _rl_translations_ci = {{}}     # Case-insensitive: lower_key -> value (v4.1.0)
     _rl_loaded = False
     _rl_prev_say_menu_filter = None
     _rl_prev_replace_text = None
+    _rl_hotkey_visible_re = _rl_re.compile(r"^.+\s\[[A-Za-z]\]$")
+    _rl_placeholder_remnant_re = _rl_re.compile(
+        r"(?i)(?:R[A-Z]{0,6}LPH[0-9A-F]{3,}|XRPYX_[A-Z0-9_]+|RNPY_[A-Z0-9_]+)"
+    )
 
     # Punct spacing regex — used ONLY in Layer 2 (post-interpolation)
     # so no bracket/tag protection is needed.
@@ -104,6 +130,87 @@ init -999 python:
             if replacement[0].isupper():
                 return replacement[0].lower() + replacement[1:]
         return replacement
+
+    def _rl_should_log_miss(text):
+        """Filter out noisy runtime fragments before writing diagnostics."""
+        if not _rl_runtime_string_diagnostics or not text:
+            return False
+        stripped = text.strip()
+        if len(stripped) < 2:
+            return False
+        if stripped in _rl_translated_values:
+            return False
+        return any(ch.isalnum() for ch in stripped)
+
+    def _rl_get_runtime_miss_path():
+        global _rl_runtime_miss_path
+        if _rl_runtime_miss_path is not None:
+            return _rl_runtime_miss_path
+        try:
+            lang = "{renpy_lang}"
+            try:
+                if hasattr(_preferences, 'language') and _preferences.language:
+                    lang = _preferences.language
+            except Exception:
+                pass
+            diag_dir = _rl_os.path.join(config.gamedir, "tl", lang, "diagnostics")
+            if not _rl_os.path.isdir(diag_dir):
+                _rl_os.makedirs(diag_dir)
+            _rl_runtime_miss_path = _rl_os.path.join(diag_dir, "runtime_missed_strings.jsonl")
+        except Exception:
+            _rl_runtime_miss_path = ""
+        return _rl_runtime_miss_path
+
+    def _rl_classify_runtime_miss_reason(text, default_reason):
+        stripped = (text or "").strip()
+        if not stripped:
+            return default_reason
+        if "⟦" in stripped or "⟧" in stripped or _rl_placeholder_remnant_re.search(stripped):
+            return "corruption_driven_miss"
+        if default_reason == "quote_lookup_miss":
+            return default_reason
+        if _rl_hotkey_visible_re.match(stripped):
+            return "hotkey_visible_form_miss"
+        return default_reason
+
+    def _rl_log_runtime_miss(layer, text, reason):
+        """Write unique missed-runtime strings to a bounded JSONL log."""
+        if not _rl_should_log_miss(text):
+            return
+
+        stripped = text.strip()
+        miss_key = layer + u"\x1f" + stripped
+        if miss_key in _rl_runtime_miss_logged:
+            return
+        if len(_rl_runtime_miss_logged) >= _rl_runtime_miss_limit:
+            return
+
+        log_path = _rl_get_runtime_miss_path()
+        if not log_path:
+            return
+
+        _rl_runtime_miss_logged.add(miss_key)
+        normalized_reason = _rl_classify_runtime_miss_reason(text, reason)
+        payload = {{
+            "ts": int(_rl_time.time()),
+            "layer": layer,
+            "reason": normalized_reason,
+            "text": text,
+            "stripped": stripped,
+            "length": len(stripped),
+            "quoted": len(stripped) >= 2 and stripped[0] == '"' and stripped[-1] == '"',
+            "has_square_brackets": "[" in stripped and "]" in stripped,
+            "has_text_tags": "{{" in text and "}}" in text,
+            "has_pipe": "|" in stripped,
+            "looks_like_hotkey_visible_form": bool(_rl_hotkey_visible_re.match(stripped)),
+            "looks_like_placeholder_remnant": bool("⟦" in stripped or "⟧" in stripped or _rl_placeholder_remnant_re.search(stripped)),
+        }}
+
+        try:
+            with _rl_io.open(log_path, "a", encoding="utf-8") as f:
+                f.write(_rl_json.dumps(payload, ensure_ascii=False) + u"\n")
+        except Exception:
+            pass
 
     def _rl_find_strings_json():
         """Find strings.json with exhaustive path search."""
@@ -247,6 +354,8 @@ init -999 python:
 
     def _rl_say_menu_text_filter(text):
         """Exact-match-only filter. NEVER partially modifies text."""
+        _original_text = text
+        _had_local_match = False
         try:
             if text and _rl_loaded:
                 # Try 1: Exact match (preserves tags, whitespace, everything)
@@ -278,6 +387,7 @@ init -999 python:
 
                 # Apply if found
                 if translated is not None:
+                    _had_local_match = True
                     if _renlocalizer_debug:
                         try:
                             with _rl_io.open(_rl_os.path.join(config.gamedir, "renlocalizer_debug.log"), "a", encoding="utf-8") as f:
@@ -291,9 +401,14 @@ init -999 python:
         # Chain to any previous filter
         if _rl_prev_say_menu_filter:
             try:
-                return _rl_prev_say_menu_filter(text)
+                final_text = _rl_prev_say_menu_filter(text)
+                if not _had_local_match and final_text == _original_text:
+                    _rl_log_runtime_miss("say_menu_text_filter", _original_text, "no_exact_match_pre_interpolation")
+                return final_text
             except Exception:
                 pass
+        if not _had_local_match and text == _original_text:
+            _rl_log_runtime_miss("say_menu_text_filter", _original_text, "no_exact_match_pre_interpolation")
         return text
 
     # =========================================================================
@@ -318,6 +433,7 @@ init -999 python:
         This eliminates all false-positive matching corruption where short
         keys like 'An', 'NOT', 'MA' would match inside longer words.
         """
+        _original_text = text
         try:
             if not text or not _rl_loaded:
                 if _rl_prev_replace_text:
@@ -363,13 +479,28 @@ init -999 python:
                 if _stripped[0] == '"' and _stripped[-1] == '"':
                     _inner = _stripped[1:-1]
                     if _inner:
+                        _inner_stripped = _inner.strip()
+                        _inner_leading = _inner[:len(_inner) - len(_inner.lstrip())]
+                        _inner_trailing = _inner[len(_inner.rstrip()):]
                         # Try exact match on inner text
                         translated = _rl_translations.get(_inner)
+                        if translated is None and _inner_stripped and _inner_stripped != _inner:
+                            _trimmed_exact = _rl_translations.get(_inner_stripped)
+                            if _trimmed_exact is not None:
+                                translated = _inner_leading + _trimmed_exact + _inner_trailing
                         # Try case-insensitive on inner text
                         if translated is None:
                             _ci_inner = _rl_translations_ci.get(_inner.lower())
                             if _ci_inner is not None:
                                 translated = _rl_apply_case(_inner, _ci_inner)
+                        if translated is None and _inner_stripped and _inner_stripped != _inner:
+                            _ci_inner_trimmed = _rl_translations_ci.get(_inner_stripped.lower())
+                            if _ci_inner_trimmed is not None:
+                                translated = (
+                                    _inner_leading
+                                    + _rl_apply_case(_inner_stripped, _ci_inner_trimmed)
+                                    + _inner_trailing
+                                )
                         if translated is not None:
                             # Re-wrap in quotes to preserve game dialogue formatting
                             translated = '"' + translated + '"'
@@ -393,6 +524,12 @@ init -999 python:
             # Chain to any previous replace_text handler
             if _rl_prev_replace_text:
                 result = _rl_prev_replace_text(result)
+
+            if translated is None and result in (_original_text, _rl_fix_punct_spacing(_original_text)):
+                _reason = "no_exact_match_post_interpolation"
+                if _stripped and len(_stripped) >= 3 and _stripped[0] == '"' and _stripped[-1] == '"':
+                    _reason = "quote_lookup_miss"
+                _rl_log_runtime_miss("replace_text", _original_text, _reason)
 
             return result
         except Exception:

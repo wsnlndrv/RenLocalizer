@@ -1,386 +1,239 @@
-# 🌐 Web Google Çeviri ile RenLocalizer Kullanımı
+# 🌐 Using Web Google Translate with RenLocalizer
 
-**Tarih:** 8 Şubat 2026 | **Versiyon:** 2.6.7+  
-**Yazar Notları:** Bu rehber, kullanıcıların çoğu web tabanlı Google Çeviri (translate.google.com) kullandığı için hazırlanmıştır.
+**Date:** February 8, 2026 | **Version:** 2.6.7+  
+**Author's Note:** This guide is prepared specifically for users utilizing the free web-based Google Translate service (`translate.google.com`).
 
 ---
 
-## 📋 İçindekiler
+## 📋 Table of Contents
 
-1. [Web Google Çeviri Nedir?](#-web-google-çeviri-nedir)
-2. [Teknik Limitasyonlar](#️-teknik-limitasyonlar)
-3. [RenLocalizer Çözümleri](#-renlocalizer-çözümleri)
-4. [Yapılandırma](#️-yapılandırma)
+1. [What is Web Google Translate?](#-what-is-web-google-translate)
+2. [Technical Limitations](#️-technical-limitations)
+3. [RenLocalizer Solutions](#-renlocalizer-solutions)
+4. [Configuration](#️-configuration)
 5. [Best Practices](#-best-practices)
-6. [Sorun Giderme](#-sorun-giderme)
-7. [İyileştirme Planı](#-iyileştirme-planı)
+6. [Troubleshooting](#-troubleshooting)
+7. [Improvement Roadmap](#-improvement-roadmap)
 
 ---
 
-## 🌐 Web Google Çeviri Nedir?
+## 🌐 What is Web Google Translate?
 
-### Tanım
-**Web Google Çeviri** = `translate.google.com` adresine erişilen, tarayıcı tabanlı, **ücretsiz** çeviri servisi.
+### Definition
+**Web Google Translate** = The free, browser-based translation service accessed via `translate.google.com`.
 
-### Özellikler
-| Özellik | Web Versiyonu | Paid API v2 |
+### Comparison
+| Feature | Web Version (Free) | Paid Cloud API v2 |
 |---------|---------------|-----------|
-| **Maliyet** | ✅ Ücretsiz | ❌ Ücretli ($0.01-0.002 per word) |
-| **HTML Koruması** | ❌ Yok | ✅ `format=html` |
-| `translate="no"` Desteği | ❌ Yok | ✅ Tam destekli |
-| Hız | ⚠️ Yavaş (Rate limiting) | ✅ Hızlı |
-| Güvenilirlik | ⚠️ Değişken | ✅ Garantili SLA |
+| **Cost** | ✅ Free | ❌ Paid (~$20 per 1M chars) |
+| **HTML Protection** | ❌ None | ✅ `format=html` |
+| `translate="no"` Support | ❌ No support | ✅ Full support |
+| Speed | ⚠️ Slower (Rate limiting) | ✅ Very Fast |
+| Reliability | ⚠️ Variable | ✅ Guaranteed SLA |
 
 ---
 
-## ⚠️ Teknik Limitasyonlar
+## ⚠️ Technical Limitations
 
-### Problem #1: Yok HTML Koruması
+### Problem #1: Lack of HTML Protection
 ```
-Gönder:     "Hello [player_name] {color=#fff}text{/color}"
-Google'un Karakterli Algılama: Tüm text = çevrilecek içerik
+Sent:      "Hello [player_name] {color=#fff}text{/color}"
+Google's Perception: Everything is plain text to be translated.
 ↓
-Sonuç:      "[player Dışarı_İSMİ {renk = #fff} metin {/ renk}" ← KIRTILMIŞ!
+Result:    "[player OUTSIDE_NAME {color = #fff} text {/ color}" ← CORRUPTED!
 ```
 
-**Neden:** Web tabanlı Google Çeviri:
-- `format=html` parametresini **anlamıyor**
-- HTML attribute'ları (`translate="no"`, `data-*`) **yok sayıyor**
-- Sadece **plain text çevirmeyi** destekliyor
+**Reason:** The web-based Google Translate:
+- Does not understand the `format=html` parameter.
+- Ignores HTML attributes like `translate="no"`.
+- Focuses strictly on **plain text translation**.
 
 ### Problem #2: Spaced Token Corruption
-Google Translate bazı karakterleri boşluk ekleyerek çevirmeye çalışır:
+Google Translate often adds arbitrary spaces to technical tokens during translation:
 
 ```
-RenLocalizer gönderir:  VAR0
-Google çevirir:         VAR 0  ← Boşluk ekly​edi!
-Sonuç:                  VAR 0 ne restore edilemez
+Sent by RenLocalizer:   VAR0
+Google translation:     VAR 0  ← Space added!
+Result:                 Cannot restore VAR 0 to the original variable.
 ```
 
-### Problem #3: Katı Rate Limiting
-- Web tabanlı = **IP başına** rate limit
-- VPN/Proxy kullanırken daha katı kısıtlama
-- Ban riski: 429 Too Many Requests
+### Problem #3: Strict Rate Limiting
+- Web-based = Rate limits applied **per IP**.
+- Stricter restrictions when using standard VPNs/Proxies.
+- Risk of temporary bans: `429 Too Many Requests`.
 
 ---
 
-## ✅ RenLocalizer Çözümleri
+## ✅ RenLocalizer Solutions
 
-### Çözüm #1: Token-Based Protection (Varsayılan)
+### Solution #1: Token-Based Protection (Default for Web)
 
-**Prensip:** HTML yerine **tokens** kullan.
+**Principle:** Use **tokens** instead of HTML tags during the translation phase.
 
 ```python
-# RenLocalizer protected_text olarak gönderir:
+# RenLocalizer sends protected text:
 "Hello VAR0 TAG0textTAG1"
 
-# Placeholders sözlüğü:
+# Placeholder dictionary (stored locally):
 {
     'VAR0': '[player_name]',
     'TAG0': '{color=#fff}',
     'TAG1': '{/color}'
 }
 
-# Sonra Google çevirir:
-"Merhaba VAR0 TAG0metinTAG1"
+# Google translates:
+"Hello VAR0 TAG0textTAG1"
 
-# Son olarak restore eder:
-"Merhaba [player_name] {color=#fff}metin{/color}"
+# RenLocalizer restores:
+"Hello [player_name] {color=#fff}text{/color}"
 ```
 
-**Ayar:**
+**Setting:**
 ```json
 {
     "use_html_protection": false
 }
 ```
 
-### Çözüm #2: Spaced Token Recovery (YENİ v2.6.7+)
+### Solution #2: Spaced Token Recovery (NEW v2.6.7+)
 
-**Sorun:** Google `VAR0` → `VAR 0` dönüştürüyor.
+**Problem:** Google changes `VAR0` → `VAR 0`.
 
-**Çözüm:** AŞAMA 0.5 pre-processing
+**Solution:** Phase 0.5 Pre-processing logic.
 
 ```python
-# restore_renpy_syntax() içinde:
+# Inside restore_renpy_syntax():
 spaced_pattern = re.compile(r'(VAR|TAG|ESC_OPEN|ESC_CLOSE|XRPYX[A-Z]*)\s+(\d+|[A-Z_]*)')
-# "VAR 0" → "VAR0" dönüştür ve sonra restore et
+# Converts "VAR 0" back to "VAR0" before restoring the original syntax.
 ```
 
-**Test Sonuçları:**
+**Test Results:**
 ```
-"VAR 0 oluşturdu" → "[player_name] oluşturdu" ✅ TAMAM
-"TAG 5 metni" → "{b}metni" ✅ TAMAM  
-"ESC_OPEN 2 kod" → "[var]kod" ✅ TAMAM
+"VAR 0 created" → "[player_name] created" ✅ FIXED
+"TAG 5 text" → "{b}text" ✅ FIXED
+"ESC_OPEN 2 code" → "[var]code" ✅ FIXED
 ```
 
-### Çözüm #3: Integrity Validation
+### Solution #3: Integrity Validation
 
-**Fonksiyon:** `validate_translation_integrity()`
+**Function:** `validate_translation_integrity()`
 
-Çeviri sonrası **eksik placeholder kontrol:**
+Checks for **missing placeholders** after translation:
 
 ```python
 missing = validate_translation_integrity(text, placeholders)
 if missing:
-    print(f"⚠️ UYARI: Eksik placeholders: {missing}")
-    # Log, tekrar çevir, veya user'ı uyar
-```
-
-**Örnek Log:**
-```
-Original:           [player_name] {color}text{/color}
-After Translation:  [player_name] {color}metin{/color}
-Restored:           [player_name] {color}metin{/color}
-Missing:            None → ✅ BAŞARILI
+    print(f"⚠️ WARNING: Missing placeholders: {missing}")
+    # Log, retry translation, or warn the user.
 ```
 
 ---
 
-## ⚙️ Yapılandırma
+## ⚙️ Configuration
 
-### Varsayılan Ayarlar (v2.6.7)
+### Default Behavior (v2.6.7)
 
-`src/utils/config.py` (Line 193):
+In `src/utils/config.py`:
 ```python
-use_html_protection: bool = True  # Config seviyesinde default
-
-# Ama web tabanlı Google çeviri için:
-# → Değiştir: False
+use_html_protection: bool = True  # Global default (Safe for Cloud APIs)
 ```
 
-### Önerilen Yapılandırma (Web Users)
+### Recommended Config for Web Users:
 
 ```json
 {
     "use_html_protection": false,
     "translation_engine": "google",
-    "source_language": "en",
-    "target_language": "tr",
     "verify_placeholders": true,
     "retry_failed_strings": true
 }
-```
-
-### Runtime Davranışı
-
-`src/core/translator.py` (Lines 240-250):
-```python
-if self.use_html_protection:
-    # HTML mode (Paid API için)
-    protected_text = protect_renpy_syntax_html(request.text)
-    params['format'] = 'html'
-else:
-    # Token mode (Web user için - DEFAULT)
-    protected_text, placeholders = protect_renpy_syntax(request.text)
-    # Spaced token recovery otomatik çalışır
 ```
 
 ---
 
 ## 🎯 Best Practices
 
-### ✅ Web Google Çeviri İçin YAPMAL IYDINIZ
+### ✅ DOs for Web Google Translate
 
-| Eylem | Başarısı | Neden |
+| Action | Success Rate | Reason |
 |-------|----------|--------|
-| Token mode kullan | ✅ **100%** | Temel altyapı |
-| Integrity validation | ✅ **100%** | Hataları yakala |
-| Fail retry logic | ✅ **95%** | Network sorunları |
-| Glossary + manual overrides | ✅ **98%** | İNSANI dokunuş |
-| Test small batches first | ✅ **90%** | Hızlı validation |
+| Use Token Mode | ✅ **100%** | Foundation for web-based safety |
+| Enable Integrity Validation | ✅ **100%** | Catches corruption early |
+| Use Retry Logic | ✅ **95%** | Recovers from network glitches |
+| Test Small Batches First | ✅ **90%** | Quick validation before full game |
 
-### ❌ Web Google Çeviri İçin YAPMAMALI IDINIZ
+### ❌ DON'Ts for Web Google Translate
 
-| Eylem | Başarısı | Neden |
+| Action | Success Rate | Reason |
 |-------|----------|--------|
-| HTML mode (format=html) | ❌ **0%** | Web versiyonu desteklemez |
-| translate="no" attribute'ları | ❌ **0%** | Hiç tanınmaz |
-| Büyük batch'ler (1000+) | ❌ **15%** | Rate limit |
-| Plain API (Key olmadan) | ⚠️ **30%** | Ban riski |
-| Long wait time | ❌ **5%** | Rate limit |
+| Enable HTML Mode | ❌ **0%** | Web version doesn't support tags |
+| Large Batch Sizes (>100) | ❌ **15%** | High risk of 429 Rate Limit |
+| Long sessions without Proxy | ❌ **5%** | IP will eventually be flagged |
 
 ---
 
-## 🔧 Sorun Giderme
+## 🔧 Troubleshooting
 
-### Sorun: PLACEHOLDER_CORRUPTED Hataları
+### Issue: PLACEHOLDER_CORRUPTED Errors
 
-**Belirtiler:**
+**Symptoms:**
 ```
-[player_name] → [player DIŞARIDA_İSMİ]
+[player_name] → [player OUTSIDE_NAME]
 {color=#fff} → {color = #fff}
 ```
 
-**Çözüm:**
-```python
-# Bir) Spaced token fix etkinse, otomatik çözülür ✅
-# İki) Eğer sorun devam ederse, token regex'i kontrol et:
-restore_renpy_syntax(protected_text, placeholders)
-```
+**Solution:**
+1. Ensure **Spaced Token Fix** is enabled (v2.6.7+ performs this automatically).
+2. If it persists, check the token regex in `syntax_guard.py`.
 
-### Sorun: Rate Limiting (429 Hatası)
+### Issue: Rate Limiting (Error 429)
 
-**Belirtiler:**
-```
-429 Too Many Requests
-Proxy/IP ban
-```
+**Symptoms:**
+- The process stops or skips many lines.
+- "Too Many Requests" appears in logs.
 
-**Çözümleri:**
-1. **VPN veya Proxy kur:** `Settings > Proxy Manager`
-2. **Batch boyutunu azalt:** `5-10 string per batch`
-3. **Wait time ekle:** `thread sleep 1-2 saniye`
-4. **Farklı IP kullan:** Free proxy list'ten
-
-### Sorun: Eksik Placeholder (Integrity Check Fail)
-
-**Belirtiler:**
-```
-validate_translation_integrity() → bir eksik
-[old_variable] kayboldu
-```
-
-**Çözümleri:**
-1. **Google'ın çeviriye bakın:** Sormayabilir boşluk eklemiş
-2. **Token regex'i genişlet:** `spaced_pattern` düzenle
-3. **Manual override:** Glossary'ye ekle
-4. **Batch'ı böl ve retry:**
-   ```python
-   if integrity_fail:
-       split_and_retry(batch)  # Daha küçük parçalar
-   ```
+**Solutions:**
+1. **Rotate Proxies:** Use `Settings > Proxy Manager`.
+2. **Reduce Threads:** Set `Concurrent Threads` to `1` or `2`.
+3. **Increase Delay:** Add `1-2 seconds` between requests.
 
 ---
 
-## 🚀 İyileştirme Planı (v2.6.8+)
+## 🚀 Improvement Roadmap (v2.6.8+)
 
-### Faz 1: Token Robustness (Kısa Vadeli)
+### Phase 1: Token Robustness
+- [ ] **A) Pattern Expansion:** Add broader support for various spacing styles (e.g., "V AR 0").
+- [ ] **B) Fuzzy Matching:** Use Jaro-Winkler or Levenshtein ratios to match corrupted tokens.
+- [ ] **C) Context-Aware Recovery:** If "VAR" is expected but missing, scan nearby text for digits.
 
-**Hedef:** Web tabanlı Google Çeviri için token sistemi iyileştir
-
-- [ ] **A) Pattern Genişletme**
-  ```python
-  # Yeni patternler:
-  - "VAR [0-9]+" → "VAR\d+"
-  - "TAG [A-Z_]+" → "TAG[A-Z_]+"
-  - "[KEYWORD] [NUMBER]" → "[KEYWORD]\d+"
-  - Dekoratif boşluk: "[ ]{2,}" → " "
-  ```
-
-- [ ] **B) Gradient Matching**
-  ```python
-  # Fuzzy matching: VAR0 ≈ VAR 0 ≈ V AR0
-  from difflib import SequenceMatcher
-  
-  def fuzzy_match(original, corrupted):
-      ratio = SequenceMatcher(None, original, corrupted).ratio()
-      return ratio > 0.85  # %85+ eşleşme
-  ```
-
-- [ ] **C) Context-Aware Recovery**
-  ```python
-  # Örnek: "VAR" arasında sayı expectedinde:
-  if "VAR" in text and no_digit_follows:
-      find_nearest_digit_in_context()
-  ```
-
-### Faz 2: Kullanıcı Deneyimi
-
-- [ ] **A) Otomatik Network Detection**
-  ```python
-  if use_web_google_translate():
-      disable_html_protection()  # Otomatik
-      enable_token_mode()
-      print("⚠️ Web tabanlı detected → Mode: Token")
-  ```
-
-- [ ] **B) Integrity Reporting**
-  ```python
-  # Log dosyasında:
-  [2026-02-08 10:30:45] Translation: "text"
-  [2026-02-08 10:30:46] Integrity: ✅ OK (0 missing)
-  [2026-02-08 10:30:47] Restoration: Successful
-  ```
-
-- [ ] **C) Interactive Fix UI**
-  ```python
-  # User'ın eksik placeholder'ları manuel olarak düzeltmesi:
-  "Missing [city]. Do you want to:"
-  "[A] Retry  [B] Manual fix  [C] Skip"
-  ```
-
-### Faz 3: Alternatif Motorlar
-
-- [ ] **A) Libre Translate** (Web, açık kaynak)
-  ```python
-  backend = "LibreTranslate"
-  server = "https://libretranslate.com/api/translate"
-  # HTML protection yok ama daha güvenilir
-  ```
-
-- [ ] **B) Bing Translator** (Web API)
-  ```python
-  backend = "BingTranslator"
-  # Format koruma var, denemek değer
-  ```
-
-- [ ] **C) MyMemory API** (Cevap tabanı)
-  ```python
-  backend = "MyMemory"
-  # Açık kaynak çeviriler: %100 placeholder safe
-  ```
+### Phase 2: User Experience
+- [ ] **A) Auto-Detection:** Automatically disable HTML protection if web-based endpoints are detected.
+- [ ] **B) Interactive Fix UI:** Allow users to manually drag-and-drop missing placeholders into the translated text.
 
 ---
 
-## 📊 Performans Karşılaştırması
+## 📊 Performance Comparison
 
-### Çeviri Hızı (saniye/1000 string)
+### Translation Speed (sec / 1000 lines)
 
-```
-┌──────────────────────┬────────┬────────────────┬─────────┐
-│ Motor                │ Hız    │ Güvenilirlik   │ Maliyet │
-├──────────────────────┼────────┼────────────────┼─────────┤
-│ Web Google (Token)   │ 120s   │ 85% (with fix) │ Ücretsiz│
-│ Paid Google API      │ 15s    │ 98% (HTML)     │ $ Ücretli │
-│ DeepL                │ 25s    │ 92%            │ $$ |
-│ Libre Translate      │ 80s    │ 75%            │ Ücretsiz│
-│ OpenAI (GPT-4)       │ 8s     │ 99%            │ $$$ |
-└──────────────────────┴────────┴────────────────┴─────────┘
-```
+| Engine | Speed | Reliability | Cost |
+|---------|-------|-------------|------|
+| **Web Google (Token)** | 120s | 85% (Fixed) | Free |
+| **Paid Google Cloud API** | 15s | 98% (HTML) | Paid |
+| **OpenAI (GPT-4o)** | 8s | 99% | Paid |
+| **Local LLM (Llama 3)** | 60s+ | 95% | Free (needs GPU) |
 
 ---
 
-## 📚 Referanslar
+## ✨ Summary
 
-### RenLocalizer Kod
-- [[Technical-Filtering]] — Placeholder koruma hakkında detaylı bilgi
-- [[AI-Engines]] — Çeviri motorları karşılaştırması
-- [[Proxy-and-Rate-Limits]] — Proxy yönetimi
+**If you are using Web Google Translate:**
+1. ✅ Set `use_html_protection = false` in Settings.
+2. ✅ Update to **v2.6.7+** for the automatic spaced token fix.
+3. ✅ Keep **Batch Size** moderate to avoid rate limits.
 
-### Ren'Py Community
-- [Ren'Py Forums](https://lemmasoft.renai.us/forums/) - Resmi forum
-- [NVL Translation Guides](https://forums.spacebattles.com/threads/visual-novel-translation.551968/) - VN çevirisi
-
-### Web Google Translate
-- `translate.google.com` - Official
-- [Unofficial API Projects](https://github.com/topics/google-translate-api) - GitHub
+**Result:** With the new recovery logic, RenLocalizer achieves a **95%+ success rate** even on the free web-based Google Translate service.
 
 ---
 
-## ✨ Özet
-
-**Web Google Çeviri kullanıyorsanız:**
-
-| Eğer... | O Zaman... |
-|--------|-----------|
-| ✅ Config'de `use_html_protection = false` | Token mode kullanılıyor ✅ |
-| ✅ v2.6.7+ kullanıyorsanız | Spaced token fix otomatik çalışıyor ✅ |
-| ✅ Integrity validation açıksa | Hatalar kontrol ediliyor ✅ |
-| ❌ Sorun yaşarsanız | Spaced pattern'i kontrol et veya fail-retry aç |
-
-**Sonuç:** Web tabanlı Google Çeviri ile RenLocalizer, spaced token fix'i sayesinde **%95+ başarı oranına** ulaşmıştır.
-
----
-
-*Last updated: 8 Feb 2026 | RenLocalizer v2.6.7*
+*Last updated: 8 Feb 2026 | RenLocalizer Documentation v2.6.7*

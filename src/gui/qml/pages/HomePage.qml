@@ -154,7 +154,9 @@ Rectangle {
                     
                     Image {
                         anchors.fill: parent
-                        source: backend.get_asset_url("icon.ico")
+                        source: Qt.platform.os === "windows"
+                            ? backend.get_asset_url("icon.ico")
+                            : backend.get_asset_url("icon.png")
                         fillMode: Image.PreserveAspectFit
                         smooth: true
                         mipmap: true

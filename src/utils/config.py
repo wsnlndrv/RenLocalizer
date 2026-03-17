@@ -47,6 +47,20 @@ TURKIC_LANGUAGE_CODES = {
     "tr", "az", "azb", "tk", "uz", "kk", "ky", "tt", "ba", "ug", "sah", "kaa"
 }
 
+VALID_APP_THEMES: tuple[str, ...] = (
+    "dark",
+    "light",
+    "red",
+    "turquoise",
+    "green",
+    "neon",
+    "auto",
+)
+
+LEGACY_APP_SETTING_ALIASES: dict[str, str] = {
+    "theme": "app_theme",
+}
+
 
 def _is_turkic_locale(code: str) -> bool:
     normalized = (code or "").lower().replace("_", "-")
@@ -192,6 +206,7 @@ class TranslationSettings:
     exclude_system_folders: bool = True  # Automatically skip renpy/, cache/, saves/, etc.
     scan_rpym_files: bool = False  # Changed to False to save API usage/time       # Skip .rpym and .rpymc files by default (usually technical)
     auto_generate_hook: bool = True     # Automatically generate Runtime Hook after translation
+    runtime_string_diagnostics: bool = False  # Write bounded runtime miss diagnostics from the hook
     # NEW: Cache Management (v2.5.3)
     use_global_cache: bool = True       # Global cache (keeps translations in program folder for portability)
     cache_path: str = "cache"           # Global cache directory name
@@ -305,7 +320,7 @@ class ApiKeys:
 class AppSettings:
     """General application settings."""
     ui_language: str = ""  # Will be auto-detected if empty
-    app_theme: str = "dark"  # Application theme: 'dark', 'light', or 'auto'
+    app_theme: str = "dark"  # Application theme preset
     last_input_directory: str = ""
     check_for_updates: bool = True
     # Output format: 'old_new' (Ren'Py official old/new blocks, recommended) or 'simple' (legacy)
@@ -315,8 +330,10 @@ class AppSettings:
 
     def __post_init__(self):
         """Validate enum/allowlist fields."""
-        if self.app_theme not in ("dark", "light", "auto"):
-            self.app_theme = "dark"
+        normalized_theme = str(self.app_theme).strip().lower()
+        if normalized_theme not in VALID_APP_THEMES:
+            normalized_theme = "dark"
+        self.app_theme = normalized_theme
         if self.output_format not in ("old_new", "simple"):
             self.output_format = "old_new"
         self.ui_language = str(self.ui_language).strip()
@@ -589,7 +606,10 @@ class ConfigManager:
                 
                 # Load app settings
                 if 'app_settings' in config_data:
-                    app_data = self._filter_config_data(AppSettings, config_data['app_settings'])
+                    app_settings_data = dict(config_data['app_settings'])
+                    if 'theme' in app_settings_data and 'app_theme' not in app_settings_data:
+                        app_settings_data['app_theme'] = app_settings_data.pop('theme')
+                    app_data = self._filter_config_data(AppSettings, app_settings_data)
                     self.app_settings = AppSettings(**app_data)
                 
                 # Load proxy settings
@@ -623,15 +643,37 @@ class ConfigManager:
             return config_loaded
             
         except Exception as e:
-            self.logger.error(f"Error loading configuration: {e}")
-            # Even if config loading fails, set system language
-            detected_lang = detect_system_language()
-            self.app_settings.ui_language = detected_lang
-            self.logger.info(f"Config failed, using auto-detected language: {detected_lang}")
-            return False
-    
+                self.logger.error(f"Error loading configuration: {e}")
+                # Even if config loading fails, set system language
+                detected_lang = detect_system_language()
+                self.app_settings.ui_language = detected_lang
+                self.logger.info(f"Config failed, using auto-detected language: {detected_lang}")
+                return False
 
-    
+    @staticmethod
+    def _normalize_dataclass_instance(instance: Any) -> None:
+        """Run dataclass-level validation after in-memory mutations."""
+        validator = getattr(instance, "__post_init__", None)
+        if callable(validator):
+            validator()
+
+    @staticmethod
+    def _resolve_setting_alias(section: str, setting: str) -> str:
+        """Map legacy config keys to the current dataclass field names."""
+        if section in {"ui", "app"}:
+            return LEGACY_APP_SETTING_ALIASES.get(setting, setting)
+        return setting
+
+    def _get_section_object(self, section: str) -> Any | None:
+        """Return the config section object for dot-notation helpers."""
+        if section in {"ui", "app"}:
+            return self.app_settings
+        if section == "translation":
+            return self.translation_settings
+        if section == "proxy":
+            return self.proxy_settings
+        return None
+
     def save_glossary(self) -> bool:
         """Save glossary to file."""
         try:
@@ -651,41 +693,50 @@ class ConfigManager:
     
     def set_api_key(self, service: str, api_key: str) -> None:
         """Set API key for a service."""
-        setattr(self.api_keys, f"{service}_api_key", api_key)
-        if self.app_settings.auto_save_settings:
-            self.save_config()
+        attr_name = f"{service}_api_key"
+        if not hasattr(self.api_keys, attr_name):
+            self.logger.warning("Unknown API key service requested: %s", service)
+            return
+
+        setattr(self.api_keys, attr_name, api_key)
+        self._normalize_dataclass_instance(self.api_keys)
+        self.save_config()
     
     def get_setting(self, key: str, default: Any = None) -> Any:
-        """Get a setting value using dot notation (e.g., 'ui.theme')."""
+        """Get a setting value using dot notation (e.g., 'app.app_theme')."""
         try:
             parts = key.split('.')
             if len(parts) == 2:
                 section, setting = parts
-                if section == 'ui' or section == 'app':
-                    return getattr(self.app_settings, setting, default)
-                elif section == 'translation':
-                    return getattr(self.translation_settings, setting, default)
-                elif section == 'proxy':
-                    return getattr(self.proxy_settings, setting, default)
+                setting = self._resolve_setting_alias(section, setting)
+                section_obj = self._get_section_object(section)
+                if section_obj is not None:
+                    return getattr(section_obj, setting, default)
             return default
         except Exception:
             return default
     
     def set_setting(self, key: str, value: Any) -> None:
-        """Set a setting value using dot notation (e.g., 'ui.theme')."""
+        """Set a setting value using dot notation (e.g., 'app.app_theme')."""
         try:
             parts = key.split('.')
-            if len(parts) == 2:
-                section, setting = parts
-                if section == 'ui' or section == 'app':
-                    setattr(self.app_settings, setting, value)
-                elif section == 'translation':
-                    setattr(self.translation_settings, setting, value)
-                elif section == 'proxy':
-                    setattr(self.proxy_settings, setting, value)
-                
-                if self.app_settings.auto_save_settings:
-                    self.save_config()
+            if len(parts) != 2:
+                self.logger.warning("Invalid config key format for set_setting: %s", key)
+                return
+
+            section, setting = parts
+            setting = self._resolve_setting_alias(section, setting)
+            section_obj = self._get_section_object(section)
+            if section_obj is None:
+                self.logger.warning("Unknown config section requested: %s", section)
+                return
+            if not hasattr(section_obj, setting):
+                self.logger.warning("Unknown config setting requested: %s", key)
+                return
+
+            setattr(section_obj, setting, value)
+            self._normalize_dataclass_instance(section_obj)
+            self.save_config()
         except Exception as e:
             self.logger.error(f"Error setting {key} to {value}: {e}")
 

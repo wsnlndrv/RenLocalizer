@@ -9,9 +9,25 @@ import os
 import sys
 import warnings
 import asyncio
+import logging
 import multiprocessing
+import subprocess
+import tempfile
+import shutil
 from pathlib import Path
+from types import TracebackType
+from typing import TYPE_CHECKING
 from src.utils.logger import setup_logger
+from src.utils.qt_runtime import (
+    QtGraphicsBootstrapResult,
+    build_qt_safe_relaunch_env,
+    configure_qt_graphics_environment,
+    should_attempt_qt_safe_relaunch,
+)
+
+if TYPE_CHECKING:
+    from PyQt6.QtQml import QQmlApplicationEngine
+    from PyQt6.QtWidgets import QApplication
 
 # ============================================================
 # SAFETY: Increase recursion limit for deep Ren'Py ASTs
@@ -45,22 +61,44 @@ os.environ["QT_STYLE_OVERRIDE"] = ""  # Disable style override
 # QML & MATERIAL STYLE SETTINGS
 # Load theme from config if available, otherwise default to Dark
 # ============================================================
-def _get_configured_theme():
+def _load_configured_app_theme() -> str:
     try:
         import json
-        config_path = os.path.join(os.getcwd(), "config.json")
-        if os.path.exists(config_path):
+        from src.utils.path_manager import get_app_dir, get_data_path
+
+        config_candidates = [
+            get_data_path() / "config.json",
+            get_app_dir() / "config.json",
+        ]
+        checked_paths: set[Path] = set()
+        for config_path in config_candidates:
+            if config_path in checked_paths or not config_path.exists():
+                continue
+            checked_paths.add(config_path)
             with open(config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                # app_settings -> theme
-                return data.get("app_settings", {}).get("theme", "Dark")
-    except:
+            app_settings = data.get("app_settings", {})
+            configured_theme = (
+                app_settings.get("app_theme")
+                or app_settings.get("theme")
+                or "dark"
+            )
+            return str(configured_theme).strip().lower() or "dark"
+    except Exception:
         pass
-    return "Dark"
+    return "dark"
+
+
+def _get_material_theme() -> str:
+    return "Light" if _load_configured_app_theme() == "light" else "Dark"
 
 os.environ["QT_QUICK_CONTROLS_STYLE"] = "Material"
-os.environ["QT_QUICK_CONTROLS_MATERIAL_THEME"] = _get_configured_theme()
+os.environ["QT_QUICK_CONTROLS_MATERIAL_THEME"] = _get_material_theme()
 os.environ["QT_QUICK_CONTROLS_MATERIAL_ACCENT"] = "Purple"
+
+# Keep macOS layer-backed windows enabled even during direct binary relaunches.
+if sys.platform == "darwin" and not os.environ.get("QT_MAC_WANTS_LAYER"):
+    os.environ["QT_MAC_WANTS_LAYER"] = "1"
 
 # ============================================================
 # CRITICAL: High DPI support — MUST be set before any Qt imports
@@ -108,7 +146,111 @@ except Exception:
 # ============================================================
 # GLOBAL EXCEPTION HANDLER
 # ============================================================
-def global_exception_handler(exc_type, exc_value, exc_traceback):
+def _resolve_crash_report_path() -> Path:
+    """Return a writable crash report path, preferring the managed data dir."""
+    candidates: list[Path] = []
+
+    try:
+        from src.utils.path_manager import ensure_data_directories, get_data_path
+
+        data_path = get_data_path()
+        ensure_data_directories(data_path)
+        candidates.append(data_path / "logs" / "crash_report.log")
+    except Exception:
+        pass
+
+    work_dir = globals().get("WORK_DIR")
+    if isinstance(work_dir, Path):
+        candidates.append(work_dir / "crash_report.log")
+
+    candidates.append(Path.cwd() / "crash_report.log")
+    candidates.append(Path(tempfile.gettempdir()) / "RenLocalizer-crash_report.log")
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved_candidate = candidate.resolve()
+        except Exception:
+            resolved_candidate = candidate
+        candidate_key = str(resolved_candidate)
+        if candidate_key in seen:
+            continue
+        seen.add(candidate_key)
+        try:
+            resolved_candidate.parent.mkdir(parents=True, exist_ok=True)
+            return resolved_candidate
+        except Exception:
+            continue
+
+    return Path(tempfile.gettempdir()) / "RenLocalizer-crash_report.log"
+
+
+def _append_crash_report(timestamp: str, error_msg: str) -> Path | None:
+    """Write crash details to disk and return the effective report path."""
+    crash_report_path = _resolve_crash_report_path()
+    try:
+        with open(crash_report_path, "a", encoding="utf-8") as f:
+            f.write(f"\n{'=' * 60}\n[{timestamp}]\n{error_msg}\n")
+        return crash_report_path
+    except Exception:
+        return None
+
+
+def _show_native_startup_dialog(title: str, message: str) -> bool:
+    """Try to show a native startup error dialog without depending on Qt."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(None, message, title, 0x10)
+            return True
+        except Exception:
+            return False
+
+    if sys.platform == "darwin" and shutil.which("osascript"):
+        safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
+        safe_message = message.replace("\\", "\\\\").replace('"', '\\"')
+        script = f'display alert "{safe_title}" message "{safe_message}" as critical'
+        try:
+            subprocess.run(
+                ["osascript", "-e", script],
+                check=False,
+                timeout=10,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return True
+        except Exception:
+            return False
+
+    if sys.platform.startswith("linux"):
+        dialog_commands: list[list[str]] = []
+        if shutil.which("zenity"):
+            dialog_commands.append(["zenity", "--error", "--title", title, "--text", message])
+        if shutil.which("kdialog"):
+            dialog_commands.append(["kdialog", "--error", message, "--title", title])
+
+        for command in dialog_commands:
+            try:
+                subprocess.run(
+                    command,
+                    check=False,
+                    timeout=10,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                return True
+            except Exception:
+                continue
+
+    return False
+
+
+def global_exception_handler(
+    exc_type: type[BaseException],
+    exc_value: BaseException,
+    exc_traceback: TracebackType | None,
+) -> None:
     """Catch all unhandled exceptions and show a user-friendly dialog."""
     import traceback
     import datetime
@@ -119,23 +261,17 @@ def global_exception_handler(exc_type, exc_value, exc_traceback):
 
     error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
     timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    
-    # Log to file
-    try:
-        with open("crash_report.log", "a", encoding="utf-8") as f:
-            f.write(f"\n{'='*60}\n[{timestamp}]\n{error_msg}\n")
-    except Exception:
-        pass
-    
-    # Show GUI dialog if possible (Use ctypes for independence from Qt crash)
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            ctypes.windll.user32.MessageBoxW(0, f"Bir hata oluştu:\n\n{exc_value}\n\nDetaylar crash_report.log dosyasına kaydedildi.", "RenLocalizer Hatası", 0x10)
-        except:
-            print(error_msg)
-    else:
+    crash_report_path = _append_crash_report(timestamp, error_msg)
+    crash_report_note = (
+        f"Crash report: {crash_report_path}"
+        if crash_report_path is not None
+        else "Crash report could not be written to disk."
+    )
+    dialog_message = f"Bir hata oluştu:\n\n{exc_value}\n\n{crash_report_note}"
+
+    if not _show_native_startup_dialog("RenLocalizer Hatası", dialog_message):
         print(error_msg)
+        print(crash_report_note)
     
     # Call original handler
     sys.__excepthook__(exc_type, exc_value, exc_traceback)
@@ -151,20 +287,20 @@ def show_error_and_wait(title: str, message: str) -> None:
     print(message)
     print("=" * 60)
 
-    # Try Windows MessageBox
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            ctypes.windll.user32.MessageBoxW(None, message, title, 0x10)
-        except Exception:
-            pass
+    dialog_shown = _show_native_startup_dialog(title, message)
 
     # Keep console open
-    print("\nPress Enter to close...")
-    try:
-        input()
-    except Exception:
+    if sys.stdin is not None and sys.stdin.isatty():
+        print("\nPress Enter to close...")
+        try:
+            input()
+        except Exception:
+            import time
+
+            time.sleep(10)
+    elif not dialog_shown:
         import time
+
         time.sleep(10)
 
 
@@ -285,6 +421,81 @@ def check_unix_system() -> bool:
     return True
 
 
+SCENEGRAPH_RECOVERY_EXIT_CODE = 213
+
+
+def _is_qt_smoke_test_enabled() -> bool:
+    return os.environ.get("RENLOCALIZER_QT_SMOKE_TEST", "0") == "1"
+
+
+def _get_qt_smoke_test_delay_ms() -> int:
+    raw_value = os.environ.get("RENLOCALIZER_QT_SMOKE_TEST_DELAY_MS", "400")
+    try:
+        return max(100, int(raw_value))
+    except ValueError:
+        return 400
+
+
+def _get_current_launch_command() -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, *sys.argv[1:]]
+    return [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]]
+
+
+def _wire_qml_shutdown_order(
+    app: "QApplication",
+    engine: "QQmlApplicationEngine",
+) -> None:
+    """Tear down the QML engine before app-owned backend objects disappear."""
+    teardown_scheduled = False
+
+    def _schedule_engine_teardown() -> None:
+        nonlocal teardown_scheduled
+        if teardown_scheduled:
+            return
+        teardown_scheduled = True
+        engine.deleteLater()
+
+    app.lastWindowClosed.connect(_schedule_engine_teardown)
+    app.aboutToQuit.connect(_schedule_engine_teardown)
+
+
+def _attempt_qt_safe_relaunch(
+    logger: logging.Logger,
+    stage: str,
+    detail: str,
+    graphics_bootstrap: QtGraphicsBootstrapResult,
+) -> int | None:
+    if not should_attempt_qt_safe_relaunch(
+        env=os.environ,
+        platform_name=sys.platform,
+        bootstrap=graphics_bootstrap,
+    ):
+        return None
+
+    safe_env = build_qt_safe_relaunch_env(
+        env=os.environ,
+        platform_name=sys.platform,
+    )
+    safe_platform = safe_env.get("QT_QPA_PLATFORM", "native")
+    message = (
+        f"Qt startup failed during {stage}; relaunching once in safe mode "
+        f"(platform={safe_platform}, render={safe_env.get('RENLOCALIZER_QT_RENDER_MODE', 'native')})"
+    )
+    print(f"[WARN] {message}")
+    if detail:
+        print(f"[WARN] Failure detail: {detail}")
+    logger.warning(message)
+    if detail:
+        logger.warning("Qt startup failure detail: %s", detail)
+
+    return subprocess.call(
+        _get_current_launch_command(),
+        cwd=str(WORK_DIR),
+        env=safe_env,
+    )
+
+
 def main() -> int:
     print("=" * 60)
     print("RenLocalizer V2 (Qt Quick Edition) Starting...")
@@ -295,6 +506,20 @@ def main() -> int:
     logger.info(f"RenLocalizer V2 Starting... Version: {VERSION}")
 
     setup_qt_environment()
+
+    graphics_bootstrap = configure_qt_graphics_environment(
+        frozen=bool(getattr(sys, "frozen", False))
+    )
+    graphics_summary = (
+        f"Qt graphics bootstrap: platform={sys.platform}, mode={graphics_bootstrap.mode}, "
+        f"api={graphics_bootstrap.graphics_api or 'native'}, "
+        f"plugin={graphics_bootstrap.platform_plugin or 'native'}, "
+        f"scale={graphics_bootstrap.scale_percent}%, reason={graphics_bootstrap.reason}"
+    )
+    print(f"[INFO] {graphics_summary}")
+    logger.info(graphics_summary)
+    if graphics_bootstrap.applied:
+        logger.info("Applied Qt graphics env: %s", graphics_bootstrap.applied)
     
     # Check system requirements
     if sys.platform == "win32":
@@ -307,10 +532,16 @@ def main() -> int:
 
     try:
         # Import Qt
-        from PyQt6.QtCore import QUrl, Qt
+        from PyQt6.QtCore import QTimer, QUrl, Qt
         from PyQt6.QtGui import QIcon
+        from PyQt6.QtQuick import QQuickWindow, QSGRendererInterface
         from PyQt6.QtWidgets import QApplication
         from PyQt6.QtQml import QQmlApplicationEngine
+
+        if graphics_bootstrap.graphics_api == "opengl":
+            QQuickWindow.setGraphicsApi(QSGRendererInterface.GraphicsApi.OpenGL)
+        elif graphics_bootstrap.graphics_api == "software":
+            QQuickWindow.setGraphicsApi(QSGRendererInterface.GraphicsApi.Software)
 
         # High DPI: Use PassThrough rounding so 150%/200% scales are not
         # rounded to integer multiples, preventing layout overflow and blank windows
@@ -330,18 +561,31 @@ def main() -> int:
         # that lack a system color emoji font.
         if sys.platform != "win32":
             from PyQt6.QtGui import QFontDatabase
-            _font_dirs = [
-                Path(resolve_asset_path("fonts")),  # PyInstaller _MEIPASS/fonts
+            _font_candidates = [
+                resolve_asset_path("fonts") / "NotoColorEmoji.ttf",
+                resolve_asset_path("fonts") / "NotoEmoji-Regular.ttf",
+                Path("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"),
+                Path("/usr/share/fonts/truetype/google-noto/NotoColorEmoji.ttf"),
+                Path("/usr/share/fonts/opentype/noto/NotoColorEmoji.ttf"),
+                Path("/usr/share/fonts/noto/NotoColorEmoji.ttf"),
+                Path("/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf"),
             ]
-            for _fd in _font_dirs:
-                if _fd.is_dir():
-                    for _ff in _fd.iterdir():
-                        if _ff.suffix.lower() in (".ttf", ".otf"):
-                            fid = QFontDatabase.addApplicationFont(str(_ff))
-                            if fid >= 0:
-                                logger.debug(f"Registered bundled font: {_ff.name}")
-                            else:
-                                logger.warning(f"Failed to register font: {_ff.name}")
+            _registered_fonts: set[Path] = set()
+            for _font_path in _font_candidates:
+                if not _font_path.exists() or _font_path in _registered_fonts:
+                    continue
+                fid = QFontDatabase.addApplicationFont(str(_font_path))
+                if fid >= 0:
+                    _registered_fonts.add(_font_path)
+                    logger.debug("Registered emoji font: %s", _font_path.name)
+                else:
+                    logger.warning("Failed to register emoji font: %s", _font_path)
+            if not _registered_fonts:
+                logger.info(
+                    "No emoji font registered for Qt. Linux source runs may "
+                    "show fallback icons until a system emoji font such as "
+                    "Noto Color Emoji is installed."
+                )
         
         # Import Backends (Logic)
         from src.utils.config import ConfigManager
@@ -371,22 +615,27 @@ def main() -> int:
 
         # Initialize Logic
         config_manager = ConfigManager()
-        backend = AppBackend(config_manager)
-        settings_backend = SettingsBackend(config_manager, proxy_manager=backend.proxy_manager)
+        backend = AppBackend(config_manager, parent=app)
+        settings_backend = SettingsBackend(
+            config_manager,
+            proxy_manager=backend.proxy_manager,
+            parent=app,
+        )
         
         # Link backends for signal propagation (Localization refresh)
         settings_backend.languageChanged.connect(backend.refreshUI)
         settings_backend.themeChanged.connect(backend.refreshUI)
 
         # Create QML Engine
-        engine = QQmlApplicationEngine()
+        engine = QQmlApplicationEngine(app)
+        _wire_qml_shutdown_order(app, engine)
 
         # Expose Backends to QML
         engine.rootContext().setContextProperty("backend", backend)
         engine.rootContext().setContextProperty("settingsBackend", settings_backend)
 
         # Error Handling for QML
-        def on_object_created(obj, url):
+        def on_object_created(obj, url) -> None:
             if obj is None:
                 print(f"[FATAL ERROR] Failed to load QML: {url}")
                 app.exit(-1)
@@ -410,11 +659,37 @@ def main() -> int:
 
         if not engine.rootObjects():
             print("[ERROR] No root objects created.")
+            safe_exit = _attempt_qt_safe_relaunch(
+                logger=logger,
+                stage="qml_load",
+                detail=f"qml={qml_path}",
+                graphics_bootstrap=graphics_bootstrap,
+            )
+            if safe_exit is not None:
+                return safe_exit
             return 1
 
         # Force icon on the root window (Fix for Windows taskbar)
         if engine.rootObjects():
             root_window = engine.rootObjects()[0]
+            recovery_requested = False
+            recovery_detail = ""
+
+            if hasattr(root_window, "sceneGraphError"):
+                def _handle_scene_graph_error(error: object, message: str) -> None:
+                    nonlocal recovery_requested, recovery_detail
+                    logger.error("Qt scene graph error (%s): %s", error, message)
+                    print(f"[ERROR] Qt scene graph error ({error}): {message}")
+                    if should_attempt_qt_safe_relaunch(
+                        env=os.environ,
+                        platform_name=sys.platform,
+                        bootstrap=graphics_bootstrap,
+                    ):
+                        recovery_requested = True
+                        recovery_detail = message
+                        QTimer.singleShot(0, lambda: app.exit(SCENEGRAPH_RECOVERY_EXIT_CODE))
+
+                root_window.sceneGraphError.connect(_handle_scene_graph_error)
             
             # Use native PyQt6 setIcon on QQuickWindow directly
             if not app_icon.isNull():
@@ -427,7 +702,7 @@ def main() -> int:
             # Step 2: Apply native Windows icon via ctypes (most reliable for taskbar)
             icon_path = resolve_asset_path("icon.ico")
             if sys.platform == "win32" and icon_path.exists():
-                def _apply_native_icon():
+                def _apply_native_icon() -> None:
                     """Apply icon via Win32 API after HWND is fully initialized."""
                     try:
                         import ctypes
@@ -473,7 +748,7 @@ def main() -> int:
             # Re-apply Qt icon after QML finishes initialization (cross-platform)
             if not app_icon.isNull():
                 from PyQt6.QtCore import QTimer
-                def _reapply_qt_icon():
+                def _reapply_qt_icon() -> None:
                     root_window.setIcon(app_icon)
                     app.setWindowIcon(app_icon)
                 QTimer.singleShot(100, _reapply_qt_icon)
@@ -481,8 +756,31 @@ def main() -> int:
             # Process events to flush all icon changes
             app.processEvents()
 
+            if _is_qt_smoke_test_enabled():
+                smoke_delay_ms = _get_qt_smoke_test_delay_ms()
+                logger.info("Qt smoke test enabled; exiting after %sms", smoke_delay_ms)
+                print(f"[INFO] Qt smoke test enabled; exiting after {smoke_delay_ms}ms")
+                QTimer.singleShot(smoke_delay_ms, app.quit)
+
+            try:
+                graphics_api = root_window.rendererInterface().graphicsApi()
+                graphics_api_name = getattr(graphics_api, "name", str(graphics_api))
+                logger.info("Qt Quick graphics API in use: %s", graphics_api_name)
+                print(f"[INFO] Qt Quick graphics API in use: {graphics_api_name}")
+            except Exception as exc:
+                logger.debug("Could not query Qt Quick graphics API: %s", exc)
+
         print("[OK] UI loaded successfully. Entering event loop.")
         exit_code = app.exec()
+        if exit_code == SCENEGRAPH_RECOVERY_EXIT_CODE and recovery_requested:
+            safe_exit = _attempt_qt_safe_relaunch(
+                logger=logger,
+                stage="scene_graph_error",
+                detail=recovery_detail,
+                graphics_bootstrap=graphics_bootstrap,
+            )
+            if safe_exit is not None:
+                return safe_exit
         
         # ============================================================
         # CLEANUP: Graceful asyncio shutdown (Windows WinError 10022 fix)
@@ -521,6 +819,15 @@ def main() -> int:
         print(error_msg)
         import traceback
         traceback.print_exc()
+
+        safe_exit = _attempt_qt_safe_relaunch(
+            logger=logger,
+            stage="startup_exception",
+            detail=error_msg,
+            graphics_bootstrap=graphics_bootstrap,
+        )
+        if safe_exit is not None:
+            return safe_exit
 
         show_error_and_wait(
             "RenLocalizer - Startup Error",

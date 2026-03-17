@@ -112,6 +112,8 @@
     "debug_mode_label": "Debug Modu",
     "debug_mode_tooltip": "Geliştiriciler için ekstra hata ayıklama bilgisi göster",
     "debugging_group": "Hata Ayıklama",
+    "runtime_string_diagnostics": "Çevrilmeyen Runtime Metinleri Logla",
+    "runtime_string_diagnostics_desc": "Oyun içinde çevrilmeden kalan runtime metinler için sınırlı tanılama kaydı yazar. Sandbox oyunlar ve dinamik arayüzler için faydalıdır.",
     "deep_scan": "Derin Tarama",
     "deep_scan_desc": "Normal taramanın kaçırdığı gizli metinleri bulmak için kod yapısını (AST) derinlemesine analiz eder.",
     "deep_scan_group": "Gelişmiş Tarama",

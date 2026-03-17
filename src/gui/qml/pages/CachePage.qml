@@ -28,6 +28,21 @@ Rectangle {
     
     // Sayfa görünür olduğunda veriyi yükle
     Component.onCompleted: refreshData()
+    onVisibleChanged: {
+        if (visible) {
+            refreshData()
+        }
+    }
+
+    Connections {
+        target: backend
+
+        function onTranslationFinished(success, message) {
+            if (cachePage.visible) {
+                refreshData()
+            }
+        }
+    }
     
     // Arama gecikmesi için Timer (her tuşta backend'e gitmemek için)
     Timer {

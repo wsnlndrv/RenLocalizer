@@ -1,193 +1,219 @@
 # Contributing to RenLocalizer
 
-Thank you for your interest in contributing to RenLocalizer! This document provides guidelines and information for contributors.
+Thanks for your interest in contributing to RenLocalizer.
 
-## 🚀 Getting Started
+This project sits at the intersection of parsing, localization, UI, packaging, and translation-engine integration. Good contributions are welcome in all of those areas, but the most important rule is simple:
 
-### Development Environment
-1. Fork the repository
-2. Clone your fork locally
-3. Create a virtual environment:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-4. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+> Preserve Ren'Py compatibility first. Convenience comes second.
 
-### Running Tests
+## Before You Start
+
+Please read these first:
+
+- [README.md](README.md)
+- [CHANGELOG.md](CHANGELOG.md)
+- [docs/DETAILS.md](docs/DETAILS.md)
+- [docs/wiki/Developer-Guide.md](docs/wiki/Developer-Guide.md)
+
+For architecture-aware work, also check:
+
+- `src/core/translation_pipeline.py`
+- `src/core/parser.py`
+- `src/core/translator.py`
+- `src/core/ai_translator.py`
+- `src/core/syntax_guard.py`
+- `src/core/output_formatter.py`
+
+## Development Setup
+
 ```bash
-# Run the application in development mode
+git clone https://github.com/Lord0fTurk/RenLocalizer.git
+cd RenLocalizer
+python -m venv .venv
+```
+
+Windows:
+
+```bash
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Linux / macOS:
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Run the application:
+
+```bash
 python run.py
-
-# Test with sample RenPy files
-# Place test .rpy files in a test directory and use the GUI
+python run_cli.py
 ```
 
-## 📝 Code Style
+## Project Structure
 
-### Python Guidelines
-- Follow PEP 8 standards
-- Use type hints where appropriate
-- Add docstrings to functions and classes
-- Keep functions focused and small
-- Use meaningful variable names
-
-### Example:
-```python
-def extract_translatable_text(self, file_path: Path) -> Set[str]:
-    """Extract translatable text from a .rpy file.
-    
-    Args:
-        file_path: Path to the .rpy file to parse
-        
-    Returns:
-        Set of translatable strings found in the file
-    """
-    # Implementation here
+```text
+run.py                  GUI launcher
+run_cli.py              CLI launcher
+src/core/               translation pipeline, parser, syntax safety, translators
+src/backend/            Python <-> QML bridge
+src/gui/qml/            interface
+src/utils/              config, IO, logging, packaging helpers
+src/tools/              optional helper tools
+tests/                  regression and feature tests
+docs/                   documentation
 ```
 
-## 🔧 Architecture
+Important architectural notes:
 
-### Project Structure
-```
-src/
-├── core/           # Core translation logic
-│   ├── parser.py      # RenPy file parsing
-│   ├── translator.py  # Translation engines
-│   └── output_formatter.py  # Output generation
-├── gui/            # User interface
-│   ├── main_window.py # Main application window
-│   └── themes.py      # UI themes and styling
-└── utils/          # Utilities
-    └── config.py      # Configuration management
-```
+- GUI and CLI both rely on the same core pipeline.
+- Parser correctness and syntax protection are more critical than raw translation throughput.
+- Backward compatibility matters. Avoid changing existing behavior without a strong reason.
+- Additive changes are preferred over broad rewrites.
 
-### Key Components
-- **Parser**: Extracts translatable text from RenPy files
-- **Translator**: Handles communication with translation services
-- **Output Formatter**: Generates properly formatted RenPy translation files
-- **GUI**: Qt-based user interface with theming support
+## Code Style
 
-## 🐛 Bug Reports
+### Python
 
-When reporting bugs, please include:
-- **Environment**: OS, Python version, dependency versions
-- **Steps to reproduce**: Clear step-by-step instructions
-- **Expected vs actual behavior**: What should happen vs what happens
-- **Sample files**: If possible, include problematic .rpy files
-- **Logs**: Any error messages or log files
+- Target Python `3.10+`.
+- Use type hints in function signatures.
+- Prefer readable, maintainable code over clever shortcuts.
+- Keep functions focused and cohesive.
+- Use constants/config for repeated or meaningful values.
+- Avoid adding dependencies unless the gain is clearly worth it.
 
-### Bug Report Template
-```markdown
-**Environment:**
-- OS: Windows 10 / Ubuntu 20.04 / macOS 12
-- Python: 3.9.0
-- RenLocalizer: 2.0.0
+### Practical expectations
 
-**Description:**
-Brief description of the issue
+- Preserve existing module boundaries where possible.
+- Avoid rewriting large files unless necessary.
+- Prefer surgical edits.
+- Keep comments short and useful.
+- Do not hardcode secrets, API keys, or tokens.
 
-**Steps to reproduce:**
-1. Step one
-2. Step two
-3. Step three
+## Testing
 
-**Expected behavior:**
-What should happen
+Run the test suite before opening a PR:
 
-**Actual behavior:**
-What actually happens
-
-**Additional info:**
-Any logs, screenshots, or sample files
+```bash
+python -m pytest tests
 ```
 
-## ✨ Feature Requests
+Useful narrower runs:
 
-For new features:
-1. Check existing issues to avoid duplicates
-2. Provide clear use case and motivation
-3. Consider implementation complexity
-4. Discuss with maintainers before starting large changes
-
-### Priority Areas
-- **New translation engines**: Bing, Yandex, LibreTranslate
-- **RenPy feature support**: New syntax, advanced features
-- **Performance improvements**: Faster parsing, better caching
-- **UI enhancements**: Better themes, more languages
-- **Quality improvements**: Better error handling, logging
-
-## 🔀 Pull Requests
-
-### Before Submitting
-- Create a feature branch from `main`
-- Test your changes thoroughly
-- Update documentation if needed
-- Follow the existing code style
-- Write clear commit messages
-
-### PR Guidelines
-- **Title**: Clear, descriptive title
-- **Description**: Explain what changes and why
-- **Testing**: Describe how you tested the changes
-- **Breaking changes**: Clearly mark any breaking changes
-
-### Commit Message Format
-```
-type(scope): brief description
-
-Longer explanation if needed
-
-- Bullet points for details
-- Reference issues: Fixes #123
+```bash
+python -m pytest tests/test_parser.py
+python -m pytest tests/test_false_positives.py
+python -m pytest tests/test_qt_runtime.py
+python -m pytest tests/test_external_tm.py
 ```
 
-Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
+If you change behavior in one of these areas, add or update tests:
 
-## 🔍 Code Review Process
+- parser / extraction
+- syntax guard / placeholder safety
+- output formatting / false-positive filtering
+- translation pipeline orchestration
+- settings sanitization
+- packaging or startup logic
 
-1. **Automated checks**: Code will be checked for style and basic issues
-2. **Manual review**: Maintainers will review functionality and design
-3. **Testing**: Changes will be tested with various RenPy files
-4. **Documentation**: Ensure docs are updated for user-facing changes
+## Contribution Types
 
-## 📚 Development Tips
+High-value contribution areas include:
 
-### Working with RenPy Files
-- Test with various RenPy syntax patterns
-- Consider edge cases: nested quotes, multi-line strings
-- Preserve game functionality after translation
+- Ren'Py parsing and extraction accuracy
+- false-positive reduction
+- placeholder and syntax protection
+- AI / web translator stability
+- runtime hook reliability
+- external translation memory improvements
+- GUI usability and settings clarity
+- packaging and platform compatibility
+- documentation improvements
 
-### Translation Engine Integration
-- Follow the existing translator interface
-- Handle rate limiting and errors gracefully
-- Add proper configuration options
+## Bug Reports
 
-### UI Development
-- Use existing theme system for consistency
-- Support both English and Turkish interfaces
-- Test with different screen resolutions
+When opening an issue, include:
 
-## 🎯 Current Priorities
+- operating system
+- Python version or packaged app version
+- RenLocalizer version
+- translation engine used
+- whether the issue happens in GUI, CLI, or both
+- steps to reproduce
+- expected result
+- actual result
+- logs, screenshots, or a minimal sample file if possible
 
-1. **Engine expansion**: Adding Bing, Yandex, LibreTranslate
-2. **RenPy compatibility**: Support for newer RenPy features
-3. **Performance**: Optimize for large projects
-4. **Quality**: Better error handling and user feedback
+For parser or formatting bugs, a tiny reproducible `.rpy` snippet is extremely valuable.
 
-## 📞 Community
+## Feature Requests
 
-- **Issues**: GitHub Issues for bugs and feature requests
-- **Discussions**: GitHub Discussions for questions and ideas
-- **Email**: For security issues or private matters
+For feature proposals:
 
-## 📄 License
+1. Search existing issues first.
+2. Explain the real workflow problem.
+3. Describe the expected behavior, not just the implementation idea.
+4. Mention compatibility or migration concerns if the change touches output format or parser behavior.
 
-By contributing to RenLocalizer, you agree that your contributions will be licensed under the GPL-3.0-or-later license.
+Large feature work should ideally be discussed before implementation.
 
----
+## Pull Requests
 
-Thank you for helping make RenLocalizer better! 🚀
+### Before submitting
+
+- Create a branch from `main`
+- Keep the scope focused
+- Run relevant tests
+- Update docs if behavior changes
+- Update `CHANGELOG.md` when appropriate
+
+### PR description should include
+
+- what changed
+- why it changed
+- how it was tested
+- any compatibility or migration risk
+
+### Commit message style
+
+Use clear, conventional commit messages, for example:
+
+```text
+fix(parser): handle multiline textbutton edge case
+docs(readme): rewrite project overview
+test(runtime): cover Windows Qt graphics bootstrap
+```
+
+## Review Guidelines
+
+Changes are more likely to be accepted when they:
+
+- reduce breakage risk
+- improve determinism
+- preserve existing output compatibility
+- include regression coverage
+- keep the implementation understandable
+
+## Documentation Changes
+
+If your change affects user-facing behavior, update at least one of these:
+
+- [README.md](README.md)
+- [CHANGELOG.md](CHANGELOG.md)
+- relevant file under `docs/`
+- relevant page under `docs/wiki/`
+
+Please keep documentation chronological and structured instead of appending scattered notes.
+
+## Security and Sensitive Reports
+
+Do not post secrets, private game files, or sensitive API material in public issues.
+
+For sensitive matters, prefer private maintainer contact methods available through GitHub rather than a public issue thread.
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the [GPL-3.0 License](LICENSE).

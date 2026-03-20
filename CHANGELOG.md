@@ -1,5 +1,29 @@
 # RenLocalizer Changelog
 
+### [2.7.6] - Unreleased
+
+### Linux UI Icon Reliability
+- **Bundled Emoji Font Bridged Into QML:** Linux/macOS startup now passes the registered emoji font family into QML so icon-like emoji labels can explicitly use the bundled/system emoji font instead of depending on distro-specific fallback behavior.
+- **Critical UI Surfaces Updated:** Navigation, toast notifications, Home, Settings, Tools, Glossary, Cache, and About pages now apply the shared icon font on their emoji-based action labels and section headers, reducing missing icon glyphs on Linux desktops that previously showed blank squares or fallback boxes.
+- **No Extra Asset Pack Required:** The main application logo continues to use packaged `icon.png`/`icon.ico`; the user-visible Linux icon issue was primarily caused by emoji glyph rendering, not missing bitmap assets.
+
+### UI Branding Sharpness
+- **In-App Logo Uses PNG Everywhere:** The QML navigation, Home, and About pages now use the high-resolution `icon.png` for the visible in-app logo on all platforms instead of using the Windows `.ico` asset inside the UI. The `.ico` file remains reserved for native window/taskbar integration.
+- **Sharper Small-Size Rendering:** Navigation and About logos now explicitly enable smooth + mipmap sampling for the in-app branding image, improving downscaled logo clarity without changing the native application icon behavior.
+
+### Linux Portable Launcher Polish
+- **Dual-Mode `RenLocalizer.sh`:** The launcher now detects whether it is running from a bundled portable folder or a source checkout. Portable Linux builds launch the packaged executable directly, while source checkouts still auto-bootstrap a local virtual environment and start `run.py`.
+- **tar.gz Launcher Included:** Linux portable `.tar.gz` releases now include `RenLocalizer.sh` inside the packaged folder so users have a clear entrypoint in addition to the raw executable.
+- **Portable Safe Retry:** The portable Linux launcher now mirrors the AppImage safety net and retries once with `QT_QUICK_BACKEND=software` after signal-based OpenGL/GLX startup crashes.
+- **Launcher Contract Smoke Test:** GitHub Actions now smoke-tests the portable launcher script against the packaged Linux folder before publishing the `.tar.gz` artifact.
+
+### Linux: GLX Crash Auto-Recovery
+- **Proactive GLX Probe (`qt_runtime.py`):** Frozen Linux builds now probe GLX availability via `glXQueryExtension()` (ctypes) and `glxinfo` (subprocess) **before** Qt creates any OpenGL context. When GLX is broken (missing GPU drivers, DRI mismatches, container environments), the bootstrap automatically selects `QT_QUICK_BACKEND=software` — preventing the fatal `SIGABRT` crash in `libqxcb-glx-integration.so` that previously killed the process before Python-level recovery code could run.
+- **AppImage Crash-and-Retry (`AppRun`):** If the bundled binary crashes with a signal-based exit code (> 128, e.g. SIGABRT=134), the AppImage launcher automatically retries once with software rendering. Normal error exits (1–127) are passed through without retry since Python-level recovery already handles those.
+- **tar.gz Crash-and-Retry (`RenLocalizer.sh`):** Same signal-aware crash-and-retry mechanism for the portable tar.gz launcher. Uses `RENLOCALIZER_GL_RETRY` env var to prevent infinite retry loops.
+- **Affected Systems:** Bazzite, Fedora Atomic/Silverblue, VMs without GPU passthrough, Wayland-only sessions, and other environments where GLX hardware acceleration is unavailable.
+- **Installation Docs:** Added Linux pre-built binary installation guide and GLX troubleshooting section with manual `QT_QUICK_BACKEND=software` override instructions.
+
 ### [2.7.5] - 2026-03-14
 
 ### Parser & Scan Responsiveness Fixes

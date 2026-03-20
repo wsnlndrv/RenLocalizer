@@ -25,6 +25,7 @@ Rectangle {
             Label {
                 text: "⚙️ " + (backend.uiTrigger, backend.getTextWithDefault("nav_settings", "Settings"))
                 font.pixelSize: 28
+                font.family: root.iconFontFamily
                 font.bold: true
                 color: root.mainTextColor
             }
@@ -79,6 +80,7 @@ Rectangle {
 
                     Button {
                         text: "🔄 " + (backend.uiTrigger, backend.getTextWithDefault("check_updates_now_button", "Check for updates now"))
+                        font.family: root.iconFontFamily
                         onClicked: backend.checkForUpdates(true)
                         Layout.preferredHeight: 40
                         background: Rectangle {
@@ -121,6 +123,7 @@ Rectangle {
                         
                         Button {
                             text: "📁 " + (backend.uiTrigger, backend.getTextWithDefault("open_data_folder_btn", "Open Data Folder"))
+                            font.family: root.iconFontFamily
                             onClicked: if (settingsBackend) settingsBackend.openDataFolder()
                             font.pixelSize: 13
                             background: Rectangle {
@@ -178,7 +181,7 @@ Rectangle {
                     }
 
                     // OpenAI / OpenRouter Section
-                    Label { text: (backend.uiTrigger, backend.getTextWithDefault("openai_section_title", "🤖 OpenAI / OpenRouter / DeepSeek")); font.bold: true; color: root.mainTextColor; Layout.topMargin: 10 }
+                    Label { text: (backend.uiTrigger, backend.getTextWithDefault("openai_section_title", "🤖 OpenAI / OpenRouter / DeepSeek")); font.bold: true; font.family: root.iconFontFamily; color: root.mainTextColor; Layout.topMargin: 10 }
                     
                     // Preset ComboBox
                     RowLayout {
@@ -237,7 +240,7 @@ Rectangle {
                     }
 
                     // Gemini Section
-                    Label { text: (backend.uiTrigger, backend.getTextWithDefault("gemini_section_title", "✨ Google Gemini")); font.bold: true; color: root.mainTextColor; Layout.topMargin: 10 }
+                    Label { text: (backend.uiTrigger, backend.getTextWithDefault("gemini_section_title", "✨ Google Gemini")); font.bold: true; font.family: root.iconFontFamily; color: root.mainTextColor; Layout.topMargin: 10 }
                     ApiField { 
                         label: (backend.uiTrigger, backend.getTextWithDefault("gemini_api_key_label", "Gemini API Key")); 
                         text: settingsBackend.getGeminiApiKey(); 
@@ -278,7 +281,7 @@ Rectangle {
                     }
 
                     // Local LLM Section
-                    Label { text: "🖥️ " + (backend.uiTrigger, backend.getTextWithDefault("settings_local_llm_title", "Local LLM Settings")); font.bold: true; color: root.mainTextColor; Layout.topMargin: 10 }
+                    Label { text: "🖥️ " + (backend.uiTrigger, backend.getTextWithDefault("settings_local_llm_title", "Local LLM Settings")); font.bold: true; font.family: root.iconFontFamily; color: root.mainTextColor; Layout.topMargin: 10 }
                     Label {
                         text: (backend.uiTrigger, backend.getTextWithDefault("settings_local_llm_desc", "Connect local AI apps (Ollama, LM Studio etc.) for context-aware, highly accurate translations that remember previous lines."))
                         color: "#999"
@@ -335,13 +338,14 @@ Rectangle {
 
                     Button {
                         text: "🔌 " + (backend.uiTrigger, backend.getTextWithDefault("test_local_llm_connection", "Test Connection"))
+                        font.family: root.iconFontFamily
                         Layout.fillWidth: true; highlighted: true
                         onClicked: testResultLabel.text = settingsBackend.testLocalLLMConnection()
                     }
                     Label { id: testResultLabel; Layout.fillWidth: true; color: text.includes("Success") ? "#6bcb77" : "#ff6b6b"; wrapMode: Text.Wrap }
 
                     // LibreTranslate Section
-                    Label { text: "🌐 " + (backend.uiTrigger, backend.getTextWithDefault("settings_libretranslate_title", "LibreTranslate (Local / Self-hosted)")); font.bold: true; color: root.mainTextColor; Layout.topMargin: 10 }
+                    Label { text: "🌐 " + (backend.uiTrigger, backend.getTextWithDefault("settings_libretranslate_title", "LibreTranslate (Local / Self-hosted)")); font.bold: true; font.family: root.iconFontFamily; color: root.mainTextColor; Layout.topMargin: 10 }
                     Label {
                         text: (backend.uiTrigger, backend.getTextWithDefault("settings_libretranslate_desc", "Connect LibreTranslate, Apertium or any compatible local translation server for fully offline, privacy-friendly machine translations."))
                         color: "#999"
@@ -392,13 +396,14 @@ Rectangle {
                     }
                     Button {
                         text: "🔌 " + (backend.uiTrigger, backend.getTextWithDefault("test_libretranslate_connection", "Test Connection"))
+                        font.family: root.iconFontFamily
                         Layout.fillWidth: true; highlighted: true
                         onClicked: libreTestResult.text = settingsBackend.testLibreTranslateConnection()
                     }
                     Label { id: libreTestResult; Layout.fillWidth: true; color: text.includes("✓") ? "#6bcb77" : "#ff6b6b"; wrapMode: Text.Wrap }
 
                     // Yandex Translate Section
-                    Label { text: "🔵 " + (backend.uiTrigger, backend.getTextWithDefault("settings_yandex_title", "Yandex Translate (Free)")); font.bold: true; color: root.mainTextColor; Layout.topMargin: 10 }
+                    Label { text: "🔵 " + (backend.uiTrigger, backend.getTextWithDefault("settings_yandex_title", "Yandex Translate (Free)")); font.bold: true; font.family: root.iconFontFamily; color: root.mainTextColor; Layout.topMargin: 10 }
                     Label {
                         text: (backend.uiTrigger, backend.getTextWithDefault("settings_yandex_desc", "Zero configuration needed — works out of the box. No API key, no URL. Use the button below to verify Yandex servers are reachable from your network (useful behind firewalls or in regions where Yandex may be restricted)."))
                         color: "#999"
@@ -409,6 +414,7 @@ Rectangle {
                     }
                     Button {
                         text: "🔌 " + (backend.uiTrigger, backend.getTextWithDefault("test_yandex_connection", "Test Connection"))
+                        font.family: root.iconFontFamily
                         Layout.fillWidth: true; highlighted: true
                         onClicked: yandexTestResult.text = settingsBackend.testYandexConnection()
                     }
@@ -877,6 +883,7 @@ Rectangle {
             // Reset Button
             Button {
                 text: (backend.uiTrigger, backend.getTextWithDefault("restore_defaults_full", "♻️ Restore All Settings to Default"))
+                font.family: root.iconFontFamily
                 Layout.alignment: Qt.AlignRight
                 flat: true; Material.foreground: Material.Red
                 onClicked: {
@@ -898,7 +905,7 @@ Rectangle {
         ColumnLayout {
             id: innerLayout
             anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20; spacing: 16
-            Label { text: title; font.pixelSize: 18; font.bold: true; color: Material.accent }
+            Label { text: title; font.pixelSize: 18; font.family: root.iconFontFamily; font.bold: true; color: Material.accent }
             Rectangle { Layout.fillWidth: true; height: 1; color: root.separatorColor }
         }
     }

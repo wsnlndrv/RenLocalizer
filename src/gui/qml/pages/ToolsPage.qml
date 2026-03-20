@@ -22,6 +22,7 @@ Rectangle {
             Label {
                 text: "🛠 " + (backend.uiTrigger, backend.getTextWithDefault("nav_tools", "Tools"))
                 font.pixelSize: 24
+                font.family: root.iconFontFamily
                 font.bold: true
                 color: root.mainTextColor
             }
@@ -174,7 +175,7 @@ Rectangle {
         width: Math.min(400, root.width * 0.85)
         
         background: Rectangle { color: root.cardBackground; radius: 12; border.color: root.borderColor }
-        header: Label { text: (backend.uiTrigger, backend.getTextWithDefault("font_manual_title", "Manual Font Selection")); padding: 20; font.bold: true; color: root.mainTextColor; font.pixelSize: 18 }
+        header: Label { text: (backend.uiTrigger, backend.getTextWithDefault("font_manual_title", "Manual Font Selection")); padding: 20; font.bold: true; font.family: root.iconFontFamily; color: root.mainTextColor; font.pixelSize: 18 }
         
         contentItem: ColumnLayout {
             spacing: 15
@@ -217,7 +218,7 @@ Rectangle {
         width: Math.min(520, root.width * 0.85)
         
         background: Rectangle { color: root.cardBackground; radius: 12; border.color: root.borderColor }
-        header: Label { text: (backend.uiTrigger, backend.getTextWithDefault("tl_dialog_header", "📂 TL Folder Translation")); padding: 20; font.bold: true; color: root.mainTextColor; font.pixelSize: 18 }
+        header: Label { text: (backend.uiTrigger, backend.getTextWithDefault("tl_dialog_header", "📂 TL Folder Translation")); padding: 20; font.bold: true; font.family: root.iconFontFamily; color: root.mainTextColor; font.pixelSize: 18 }
         
         contentItem: ColumnLayout {
             spacing: 15
@@ -225,7 +226,7 @@ Rectangle {
             
             RowLayout {
                 TextField { id: tlPathField; Layout.fillWidth: true; placeholderText: (backend.uiTrigger, backend.getTextWithDefault("path_not_selected_placeholder", "Path not selected...")); color: root.mainTextColor; background: Rectangle { color: root.inputBackground; border.color: root.borderColor; radius: 6 } }
-                Button { text: "📁"; onClicked: tlPathDialog.open() }
+                Button { text: "📁"; font.family: root.iconFontFamily; onClicked: tlPathDialog.open() }
             }
             
             // Kaynak Dil
@@ -315,7 +316,7 @@ Rectangle {
         width: Math.min(480, root.width * 0.85)
 
         background: Rectangle { color: root.cardBackground; radius: 12; border.color: root.borderColor }
-        header: Label { text: "🧠 " + (backend.uiTrigger, backend.getTextWithDefault("tm_import_title", "External Translation Memory")); padding: 20; font.bold: true; color: root.mainTextColor; font.pixelSize: 18 }
+        header: Label { text: "🧠 " + (backend.uiTrigger, backend.getTextWithDefault("tm_import_title", "External Translation Memory")); padding: 20; font.bold: true; font.family: root.iconFontFamily; color: root.mainTextColor; font.pixelSize: 18 }
 
         contentItem: ColumnLayout {
             spacing: 15
@@ -348,7 +349,7 @@ Rectangle {
                     color: root.mainTextColor
                     background: Rectangle { color: root.inputBackground; border.color: root.borderColor; radius: 6 }
                 }
-                Button { text: "📁"; onClicked: tmFolderDialog.open() }
+                Button { text: "📁"; font.family: root.iconFontFamily; onClicked: tmFolderDialog.open() }
             }
 
             // Dil Seçimi
@@ -385,6 +386,7 @@ Rectangle {
                         Label {
                             text: (backend.uiTrigger, backend.getTextWithDefault("tm_existing_sources", "Existing TM Sources:"))
                             font.bold: true
+                            font.family: root.iconFontFamily
                             color: root.mainTextColor
                             font.pixelSize: 13
                         }
@@ -399,12 +401,14 @@ Rectangle {
                                 Label {
                                     text: "📚 " + modelData.name + " (" + modelData.language + ") — " + modelData.entry_count + " entries"
                                     color: root.secondaryTextColor
+                                    font.family: root.iconFontFamily
                                     font.pixelSize: 12
                                     Layout.fillWidth: true
                                     elide: Text.ElideRight
                                 }
                                 Button {
                                     text: "🗑️"
+                                    font.family: root.iconFontFamily
                                     flat: true
                                     implicitWidth: 32
                                     implicitHeight: 28
@@ -472,10 +476,11 @@ Rectangle {
             RowLayout {
                 spacing: 15
                 Layout.fillWidth: true
-                Label { text: icon; font.pixelSize: 28; Layout.alignment: Qt.AlignVCenter }
+                Label { text: icon; font.pixelSize: 28; font.family: root.iconFontFamily; Layout.alignment: Qt.AlignVCenter }
                 Label { 
                     text: title
                     font.bold: true
+                    font.family: root.iconFontFamily
                     font.pixelSize: 16
                     color: root.mainTextColor
                     Layout.fillWidth: true
@@ -522,6 +527,7 @@ Rectangle {
                 
                 contentItem: Label {
                     text: parent.text
+                    font.family: root.iconFontFamily
                     color: "white"
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter

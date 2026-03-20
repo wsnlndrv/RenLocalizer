@@ -47,6 +47,42 @@ EOF
     fi
 fi
 
-# Launch the application
-# Pass all command-line arguments through
-exec "${APPDIR}/usr/bin/RenLocalizer/RenLocalizer" "$@"
+# ── OpenGL crash-and-retry ──────────────────────────────────
+# Some Linux systems (immutable distros like Bazzite/Fedora Atomic,
+# VMs without GPU passthrough, Wayland-only seats) cannot initialise
+# GLX hardware acceleration.  When that happens the bundled Qt XCB-GLX
+# integration plugin calls abort() / raises SIGABRT and the process
+# dies before the Python-level recovery code can kick in.
+#
+# Strategy: launch the app normally; if it crashes on the first attempt
+# and we haven't retried yet, relaunch once with software rendering.
+
+BINARY="${APPDIR}/usr/bin/RenLocalizer/RenLocalizer"
+
+if [ -n "${RENLOCALIZER_GL_RETRY:-}" ]; then
+    # Already in a retry attempt — just exec to avoid infinite loops
+    exec "$BINARY" "$@"
+fi
+
+# First attempt — normal launch
+"$BINARY" "$@"
+EXIT_CODE=$?
+
+if [ "$EXIT_CODE" -eq 0 ]; then
+    exit 0
+fi
+
+# Only retry for signal-based crashes (exit > 128 means killed by signal).
+# SIGABRT (134 = 128+6) is the typical GLX failure mode.
+# Normal error exits (1–127) are handled by Python-level recovery.
+if [ "$EXIT_CODE" -le 128 ]; then
+    exit "$EXIT_CODE"
+fi
+
+# Signal crash: likely a GLX / OpenGL driver abort
+echo "[RenLocalizer] Application crashed with signal $((EXIT_CODE - 128)) (exit code $EXIT_CODE)."
+echo "[RenLocalizer] Retrying with software rendering (QT_QUICK_BACKEND=software)..."
+
+export QT_QUICK_BACKEND="software"
+export RENLOCALIZER_GL_RETRY="1"
+exec "$BINARY" "$@"

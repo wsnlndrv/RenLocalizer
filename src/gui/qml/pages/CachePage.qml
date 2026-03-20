@@ -64,6 +64,7 @@ Rectangle {
             Label {
                 text: "🧠 " + (backend.uiTrigger, backend.getTextWithDefault("nav_cache", "Translation Memory (TM)"))
                 font.pixelSize: 24
+                font.family: root.iconFontFamily
                 font.bold: true
                 color: root.mainTextColor
             }
@@ -72,6 +73,7 @@ Rectangle {
             
             Button {
                 text: "🗑️ " + (backend.uiTrigger, backend.getTextWithDefault("btn_clear_cache", "Clear All"))
+                font.family: root.iconFontFamily
                 Material.background: Material.Red
                 onClicked: clearConfirmDialog.open()
             }
@@ -100,6 +102,7 @@ Rectangle {
             
             Button {
                 text: "🔄"
+                font.family: root.iconFontFamily
                 onClicked: refreshData()
                 ToolTip.visible: hovered
                 ToolTip.text: (backend.uiTrigger, backend.getTextWithDefault("btn_refresh", "Refresh"))
@@ -198,6 +201,7 @@ Rectangle {
                         
                         Button {
                             text: "✏️"
+                            font.family: root.iconFontFamily
                             flat: true
                             onClicked: {
                                 editDialog.engine = model.engine
@@ -211,6 +215,7 @@ Rectangle {
                         
                         Button {
                             text: "❌"
+                            font.family: root.iconFontFamily
                             flat: true
                             onClicked: {
                                 if (backend.deleteCacheEntry(model.engine, model.source_lang, model.target_lang, model.original)) {

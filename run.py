@@ -559,6 +559,7 @@ def main() -> int:
         # Register it via QFontDatabase so Qt can render emoji icons
         # (navigation bar, tools page, toast notifications) on distros
         # that lack a system color emoji font.
+        emoji_font_family = ""
         if sys.platform != "win32":
             from PyQt6.QtGui import QFontDatabase
             _font_candidates = [
@@ -577,6 +578,10 @@ def main() -> int:
                 fid = QFontDatabase.addApplicationFont(str(_font_path))
                 if fid >= 0:
                     _registered_fonts.add(_font_path)
+                    if not emoji_font_family:
+                        font_families = QFontDatabase.applicationFontFamilies(fid)
+                        if font_families:
+                            emoji_font_family = font_families[0]
                     logger.debug("Registered emoji font: %s", _font_path.name)
                 else:
                     logger.warning("Failed to register emoji font: %s", _font_path)
@@ -615,7 +620,11 @@ def main() -> int:
 
         # Initialize Logic
         config_manager = ConfigManager()
-        backend = AppBackend(config_manager, parent=app)
+        backend = AppBackend(
+            config_manager,
+            emoji_font_family=emoji_font_family,
+            parent=app,
+        )
         settings_backend = SettingsBackend(
             config_manager,
             proxy_manager=backend.proxy_manager,

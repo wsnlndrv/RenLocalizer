@@ -68,11 +68,17 @@ class AppBackend(QObject):
     initMessageChanged = pyqtSignal()
     busyChanged = pyqtSignal() # New signal for general busy state
     
-    def __init__(self, config_manager: ConfigManager, parent=None):
+    def __init__(
+        self,
+        config_manager: ConfigManager,
+        emoji_font_family: str = "",
+        parent: Optional[QObject] = None,
+    ):
         super().__init__(parent)
         self.config = config_manager
         self.logger = logging.getLogger(__name__)
         self._version = VERSION
+        self._emoji_font_family = emoji_font_family
         self._ui_trigger = False
         
         # State
@@ -239,6 +245,10 @@ class AppBackend(QObject):
     @pyqtProperty(str, constant=True)
     def version(self) -> str:
         return self._version
+
+    @pyqtProperty(str, constant=True)
+    def emojiFontFamily(self) -> str:
+        return self._emoji_font_family
     
     @pyqtProperty(bool, notify=translationStarted)
     def isTranslating(self) -> bool:

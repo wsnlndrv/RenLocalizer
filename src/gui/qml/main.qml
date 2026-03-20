@@ -37,6 +37,15 @@ ApplicationWindow {
     readonly property color borderColor: (currentTheme === "light") ? "#dee2e6" : "#3d3d54"
     readonly property color inputBackground: (currentTheme === "light") ? "#f8f9fa" : "#1a1a2e"
     readonly property color separatorColor: (currentTheme === "light") ? "#e9ecef" : "#2d2d44"
+    readonly property string iconFontFamily: (
+        typeof backend !== "undefined"
+        && backend !== null
+        && backend.emojiFontFamily
+        && backend.emojiFontFamily.length > 0
+    ) ? backend.emojiFontFamily : Qt.application.font.family
+    readonly property string brandingLogoSource: (
+        typeof backend !== "undefined" && backend !== null
+    ) ? backend.get_asset_url("icon.png") : ""
 
     // Material Tema Ayarları - Tamamen program içi, sistem temasından bağımsız
     Material.theme: (currentTheme === "light") ? Material.Light : Material.Dark
@@ -158,6 +167,7 @@ ApplicationWindow {
             Label {
                 text: toast.type === "success" ? "✅" : toast.type === "error" ? "❌" : toast.type === "warning" ? "⚠️" : "ℹ️"
                 font.pixelSize: 18
+                font.family: root.iconFontFamily
             }
 
             Label {
@@ -174,6 +184,7 @@ ApplicationWindow {
             ToolButton {
                 text: "✕"
                 font.pixelSize: 14
+                font.family: root.iconFontFamily
                 Material.accent: "white"
                 onClicked: toast.opacity = 0
                 Layout.alignment: Qt.AlignTop
@@ -307,7 +318,7 @@ ApplicationWindow {
                 text: "🌐 " + (backend.uiTrigger, backend.getTextWithDefault("btn_download", "Download and Update"))
                 DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
                 background: Rectangle { radius: 8; color: "#2ecc71" }
-                contentItem: Label { text: parent.text; color: "white"; horizontalAlignment: Text.AlignHCenter }
+                contentItem: Label { text: parent.text; color: "white"; font.family: root.iconFontFamily; horizontalAlignment: Text.AlignHCenter }
                 onClicked: Qt.openUrlExternally(updateDialog.url)
             }
             // "Kapat" butonu

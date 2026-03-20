@@ -164,6 +164,11 @@ jobs:
           ARCH=x86_64 ./appimagetool --appimage-extract-and-run RenLocalizer.AppDir RenLocalizer-Linux-x64.AppImage
           chmod +x RenLocalizer-Linux-x64.AppImage
 
+      - name: Install portable launcher script (Linux tar.gz)
+        run: |
+          cp RenLocalizer.sh dist/RenLocalizer/RenLocalizer.sh
+          chmod +x dist/RenLocalizer/RenLocalizer.sh
+
       - name: Smoke test AppImage startup (Linux native)
         run: |
           python - <<'PY'
@@ -191,6 +196,20 @@ jobs:
           )
           subprocess.run(
               ["xvfb-run", "-a", "./RenLocalizer-Linux-x64.AppImage"],
+              env=env,
+              check=True,
+              timeout=60,
+          )
+          PY
+
+      - name: Smoke test portable launcher (Linux tar.gz payload)
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          env = dict(os.environ, RENLOCALIZER_QT_SMOKE_TEST="1")
+          subprocess.run(
+              ["xvfb-run", "-a", "./dist/RenLocalizer/RenLocalizer.sh"],
               env=env,
               check=True,
               timeout=60,

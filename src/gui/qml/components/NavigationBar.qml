@@ -28,12 +28,12 @@ Rectangle {
 
             Image {
                 anchors.centerIn: parent
-                source: Qt.platform.os === "windows"
-                    ? backend.get_asset_url("icon.ico")
-                    : backend.get_asset_url("icon.png")
-                width: 36
-                height: 36
+                source: root.brandingLogoSource
+                width: 40
+                height: 40
                 fillMode: Image.PreserveAspectFit
+                smooth: true
+                mipmap: true
             }
         }
 
@@ -142,6 +142,7 @@ Rectangle {
             anchors.centerIn: parent
             text: icon
             font.pixelSize: 22
+            font.family: root.iconFontFamily
             opacity: selected ? 1.0 : 0.7
         }
 

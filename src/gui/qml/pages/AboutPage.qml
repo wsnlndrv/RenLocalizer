@@ -42,12 +42,12 @@ Rectangle {
 
                         Image {
                             anchors.centerIn: parent
-                            source: Qt.platform.os === "windows"
-                                ? backend.get_asset_url("icon.ico")
-                                : backend.get_asset_url("icon.png")
+                            source: root.brandingLogoSource
                             width: 80
                             height: 80
                             fillMode: Image.PreserveAspectFit
+                            smooth: true
+                            mipmap: true
                         }
                     }
 
@@ -105,6 +105,7 @@ Rectangle {
                     Label {
                         text: "🎉"
                         font.pixelSize: 48
+                        font.family: root.iconFontFamily
                     }
 
                     ColumnLayout {
@@ -134,6 +135,7 @@ Rectangle {
                         contentItem: Label {
                             text: parent.text
                             font.pixelSize: 16
+                            font.family: root.iconFontFamily
                             font.bold: true
                             color: "#ff424d"
                             horizontalAlignment: Text.AlignHCenter
@@ -165,6 +167,7 @@ Rectangle {
                     Label {
                         text: "🔗 " + (backend.uiTrigger, backend.getTextWithDefault("links_title", "Links"))
                         font.pixelSize: 18
+                        font.family: root.iconFontFamily
                         font.bold: true
                         color: root.mainTextColor
                     }
@@ -201,6 +204,7 @@ Rectangle {
                     Label {
                         text: "✨ " + (backend.uiTrigger, backend.getTextWithDefault("features_title", "Features"))
                         font.pixelSize: 18
+                        font.family: root.iconFontFamily
                         font.bold: true
                         color: root.mainTextColor
                     }
@@ -234,6 +238,7 @@ Rectangle {
                                     anchors.centerIn: parent
                                     text: modelData
                                     font.pixelSize: 12
+                                    font.family: root.iconFontFamily
                                     color: root.mainTextColor
                                 }
                             }
@@ -255,7 +260,7 @@ Rectangle {
         color: mouseArea.containsMouse ? root.separatorColor : root.inputBackground
         border.color: root.borderColor
         
-        Label { anchors.centerIn: parent; text: label; color: root.mainTextColor; font.pixelSize: 14 }
+        Label { anchors.centerIn: parent; text: label; color: root.mainTextColor; font.pixelSize: 14; font.family: root.iconFontFamily }
         MouseArea { id: mouseArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: parent.clicked() }
     }
 }

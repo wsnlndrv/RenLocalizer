@@ -7,7 +7,10 @@ Keeps Qt Quick startup choices deterministic and testable across platforms.
 from __future__ import annotations
 
 import ctypes
+import ctypes.util
+import logging
 import os
+import subprocess
 import sys
 from collections.abc import MutableMapping
 from dataclasses import dataclass
@@ -92,10 +95,109 @@ def _normalize_requested_platform(requested_platform: str | None) -> str:
     return normalized_platform
 
 
+def _probe_linux_glx_available() -> bool:
+    """Best-effort check whether GLX context creation is likely to succeed.
+
+    Attempts two complementary probes:
+    1. Call ``glXQueryExtension`` via *libGL.so.1* — this verifies the
+       driver-level GLX extension is present for the current ``$DISPLAY``.
+    2. Run ``glxinfo`` as a subprocess — catches driver/DRI problems that
+       ``glXQueryExtension`` alone might miss.
+
+    Returns ``True`` when GLX appears functional, ``False`` otherwise.
+    The function is intentionally conservative: any error → ``False``.
+    """
+    logger = logging.getLogger("RenLocalizer")
+
+    # This probe only makes sense on an actual Linux host.  When unit tests
+    # simulate platform_name="linux" on Windows/macOS the probe would always
+    # fail (no libGL / libX11) and force software mode incorrectly.
+    if sys.platform != "linux":
+        return True
+
+    # Probe 1: ctypes — fast, in-process
+    try:
+        display_env = os.environ.get("DISPLAY", "")
+        if not display_env:
+            logger.debug("GLX probe: no $DISPLAY set, GLX unavailable")
+            return False
+
+        libgl_name = ctypes.util.find_library("GL")
+        if not libgl_name:
+            logger.debug("GLX probe: libGL not found")
+            return False
+
+        libgl = ctypes.cdll.LoadLibrary(libgl_name)
+
+        # Try loading libX11 for XOpenDisplay
+        libx11_name = ctypes.util.find_library("X11")
+        if not libx11_name:
+            logger.debug("GLX probe: libX11 not found")
+            return False
+
+        libx11 = ctypes.cdll.LoadLibrary(libx11_name)
+        libx11.XOpenDisplay.restype = ctypes.c_void_p
+        libx11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+
+        dpy = libx11.XOpenDisplay(display_env.encode("utf-8") if display_env else None)
+        if not dpy:
+            logger.debug("GLX probe: XOpenDisplay failed for %r", display_env)
+            return False
+
+        try:
+            # int glXQueryExtension(Display *dpy, int *errorBase, int *eventBase)
+            glx_query = getattr(libgl, "glXQueryExtension", None)
+            if glx_query is None:
+                logger.debug("GLX probe: glXQueryExtension symbol not found")
+                return False
+
+            glx_query.restype = ctypes.c_int
+            glx_query.argtypes = [
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_int),
+                ctypes.POINTER(ctypes.c_int),
+            ]
+            error_base = ctypes.c_int(0)
+            event_base = ctypes.c_int(0)
+            result = glx_query(dpy, ctypes.byref(error_base), ctypes.byref(event_base))
+            if not result:
+                logger.debug("GLX probe: glXQueryExtension returned 0 (no GLX)")
+                return False
+        finally:
+            libx11.XCloseDisplay(dpy)
+
+        logger.debug("GLX probe: glXQueryExtension succeeded")
+    except Exception as exc:
+        logger.debug("GLX probe (ctypes) failed: %s", exc)
+        return False
+
+    # Probe 2: glxinfo subprocess — catches DRI/Mesa mismatches
+    try:
+        proc = subprocess.run(
+            ["glxinfo"],
+            capture_output=True,
+            timeout=5,
+            env={**os.environ, "DISPLAY": display_env},
+        )
+        if proc.returncode != 0:
+            stderr_snippet = (proc.stderr or b"")[:200].decode("utf-8", errors="replace")
+            logger.debug("GLX probe: glxinfo exited %d: %s", proc.returncode, stderr_snippet)
+            return False
+    except FileNotFoundError:
+        # glxinfo not installed — rely on ctypes probe alone
+        logger.debug("GLX probe: glxinfo not found, trusting ctypes result")
+    except Exception as exc:
+        logger.debug("GLX probe (glxinfo) failed: %s", exc)
+        return False
+
+    return True
+
+
 def select_qt_render_mode(
     platform_name: str,
     scale_percent: int,
     requested_mode: str | None = None,
+    frozen: bool = False,
 ) -> str:
     """Choose the safest render mode for the current platform and environment."""
     normalized_mode = _normalize_requested_mode(requested_mode)
@@ -106,6 +208,12 @@ def select_qt_render_mode(
         if scale_percent >= SAFE_HIDPI_SCALE_THRESHOLD:
             return "software"
         return "opengl"
+
+    # Linux frozen builds: proactively verify GLX so we avoid a fatal SIGABRT
+    # when the bundled Qt XCB-GLX integration plugin cannot create a context.
+    if platform_name == "linux" and frozen:
+        if not _probe_linux_glx_available():
+            return "software"
 
     return "native"
 
@@ -218,6 +326,7 @@ def configure_qt_graphics_environment(
         platform_name=effective_platform,
         scale_percent=actual_scale,
         requested_mode=requested_mode,
+        frozen=effective_frozen,
     )
     platform_plugin = existing_platform_plugin or select_qt_platform_plugin(
         env=target_env,

@@ -51,6 +51,7 @@ Rectangle {
             Label {
                 text: "📚 " + (backend.uiTrigger, backend.getTextWithDefault("nav_glossary", "Glossary Management"))
                 font.pixelSize: 24
+                font.family: root.iconFontFamily
                 font.bold: true
                 color: root.mainTextColor
             }
@@ -59,6 +60,7 @@ Rectangle {
             
             Button {
                 text: "✨ " + (backend.uiTrigger, backend.getTextWithDefault("glossary_extract_btn", "Auto Extract"))
+                font.family: root.iconFontFamily
                 onClicked: {
                     var result = backend.extractGlossaryTerms()
                     // Sonuç zaten logMessage ile geliyor ama direkt de gösterebiliriz
@@ -71,6 +73,7 @@ Rectangle {
             
             Button {
                 text: "➕ " + (backend.uiTrigger, backend.getTextWithDefault("edit_add", "Add"))
+                font.family: root.iconFontFamily
                 highlighted: true
                 onClicked: addDialog.open()
             }
@@ -83,12 +86,14 @@ Rectangle {
             
             Button {
                 text: "🔄 " + (backend.uiTrigger, backend.getTextWithDefault("btn_translate_empty", "Translate Empty"))
+                font.family: root.iconFontFamily
                 onClicked: backend.translateEmptyGlossaryItems()
                 flat: true
             }
             
             Button {
                 text: "📝 " + (backend.uiTrigger, backend.getTextWithDefault("btn_copy_source", "Copy Source"))
+                font.family: root.iconFontFamily
                 onClicked: backend.fillEmptyGlossaryWithSource()
                 flat: true
             }
@@ -109,12 +114,14 @@ Rectangle {
             
             Button {
                 text: "📤 " + (backend.uiTrigger, backend.getTextWithDefault("btn_export_glossary", "Export"))
+                font.family: root.iconFontFamily
                 flat: true
                 onClicked: exportDialog.open()
             }
             
             Button {
                 text: "📥 " + (backend.uiTrigger, backend.getTextWithDefault("btn_import_glossary", "Import"))
+                font.family: root.iconFontFamily
                 flat: true
                 onClicked: importDialog.open()
             }
@@ -188,6 +195,7 @@ Rectangle {
                     // Delete Button
                     Button {
                         text: "❌"
+                        font.family: root.iconFontFamily
                         flat: true
                         Layout.preferredWidth: 40
                         onClicked: {

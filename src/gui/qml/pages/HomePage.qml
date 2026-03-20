@@ -154,9 +154,7 @@ Rectangle {
                     
                     Image {
                         anchors.fill: parent
-                        source: Qt.platform.os === "windows"
-                            ? backend.get_asset_url("icon.ico")
-                            : backend.get_asset_url("icon.png")
+                        source: root.brandingLogoSource
                         fillMode: Image.PreserveAspectFit
                         smooth: true
                         mipmap: true
@@ -243,6 +241,7 @@ Rectangle {
                             contentItem: Label {
                                 text: parent.text
                                 font.pixelSize: 13
+                                font.family: root.iconFontFamily
                                 color: "white"
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
@@ -266,6 +265,7 @@ Rectangle {
                             contentItem: Label {
                                 text: parent.text
                                 font.pixelSize: 13
+                                font.family: root.iconFontFamily
                                 color: "white"
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
@@ -506,6 +506,7 @@ Rectangle {
                     Label {
                         text: "🧠 " + (backend.uiTrigger, backend.getTextWithDefault("tm_sources_title", "Translation Memory Sources"))
                         font.pixelSize: 16
+                        font.family: root.iconFontFamily
                         font.bold: true
                         color: root.mainTextColor
                     }
@@ -684,6 +685,7 @@ Rectangle {
                     Label {
                         text: "💡"
                         font.pixelSize: 20
+                        font.family: root.iconFontFamily
                         Layout.alignment: Qt.AlignTop
                     }
 
@@ -731,6 +733,7 @@ Rectangle {
                         Label {
                             text: "📋 " + (backend.uiTrigger, backend.getTextWithDefault("log", "Log"))
                             font.pixelSize: 14
+                            font.family: root.iconFontFamily
                             font.bold: true
                             color: root.mainTextColor
                         }
@@ -739,6 +742,7 @@ Rectangle {
 
                         Button {
                             text: "📄"
+                            font.family: root.iconFontFamily
                             flat: true
                             enabled: logModel.count > 0
                             onClicked: copyLogsToClipboard()
@@ -749,6 +753,7 @@ Rectangle {
 
                         Button {
                             text: "🗑"
+                            font.family: root.iconFontFamily
                             flat: true
                             onClicked: logModel.clear()
 
@@ -814,6 +819,7 @@ Rectangle {
                     Label {
                         text: "❤️"
                         font.pixelSize: 28
+                        font.family: root.iconFontFamily
                     }
 
                     ColumnLayout {
@@ -841,6 +847,7 @@ Rectangle {
                         contentItem: Label {
                             text: parent.text
                             font.pixelSize: 14
+                            font.family: root.iconFontFamily
                             font.bold: true
                             color: "white"
                             horizontalAlignment: Text.AlignHCenter
